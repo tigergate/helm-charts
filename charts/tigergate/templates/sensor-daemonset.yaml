@@ -1,0 +1,113 @@
+{{- if .Values.sensor.enabled }}
+# TigerEye runtime sensor (one pod per node). Loads eBPF probes to observe process
+# execution, file access, network connections and privilege changes, and streams
+# the normalized event batches over gRPC to this cluster's tigergate-operator
+# relay (controller-deployment.yaml's relay Service), which forwards every batch
+# on to tigergate-go-ingester under the org's API key — the sensor never talks to
+# the platform directly, matching every other KSPM component's "one relay point
+# per cluster" pattern. Requires kernel access: a privileged container with host
+# PID and the kernel debug/bpf filesystems mounted.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "tigergate.fullname" . }}-sensor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tigergate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sensor
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: sensor
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        {{- include "tigergate.labels" . | nindent 8 }}
+        app.kubernetes.io/component: sensor
+    spec:
+      serviceAccountName: {{ include "tigergate.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      hostPID: {{ .Values.sensor.hostPID }}
+      hostNetwork: {{ .Values.sensor.hostNetwork }}
+      {{- if .Values.sensor.hostNetwork }}
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      {{- with .Values.sensor.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.sensor.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.sensor.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: tigergate-sensor
+          image: {{ include "tigergate.sensorImage" . | quote }}
+          imagePullPolicy: {{ .Values.sensor.image.pullPolicy }}
+          args:
+            {{- with .Values.sensor.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: TIGEREYE_BACKEND_URL
+              value: {{ .Values.backend.url | quote }}
+            - name: TIGEREYE_INGEST_GRPC_ADDR
+              value: {{ include "tigergate.sensorIngestAddr" . | quote }}
+            {{- if .Values.controller.enabled }}
+            - name: TIGEREYE_OPERATOR_ADDR
+              value: {{ include "tigergate.sensorOperatorAddr" . | quote }}
+            {{- end }}
+            - name: TIGEREYE_CLUSTER_NAME
+              value: {{ required "clusterName is required" .Values.clusterName | quote }}
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: TIGEREYE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tigergate.secretRef" . }}
+                  key: apiKey
+            {{- with .Values.sensor.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          securityContext:
+            privileged: {{ .Values.sensor.privileged }}
+            {{- if not .Values.sensor.privileged }}
+            capabilities:
+              add: ["BPF", "PERFMON", "SYS_RESOURCE", "SYS_ADMIN", "SYS_PTRACE"]
+            {{- end }}
+            runAsNonRoot: false
+            runAsUser: 0
+          volumeMounts:
+            {{- if .Values.sensor.mountKernelDebug }}
+            - name: sys-kernel-debug
+              mountPath: /sys/kernel/debug
+            - name: sys-fs-bpf
+              mountPath: /sys/fs/bpf
+              mountPropagation: Bidirectional
+            {{- end }}
+          resources:
+            {{- toYaml .Values.sensor.resources | nindent 12 }}
+      volumes:
+        {{- if .Values.sensor.mountKernelDebug }}
+        - name: sys-kernel-debug
+          hostPath:
+            path: /sys/kernel/debug
+            type: Directory
+        - name: sys-fs-bpf
+          hostPath:
+            path: /sys/fs/bpf
+            type: DirectoryOrCreate
+        {{- end }}
+{{- end }}

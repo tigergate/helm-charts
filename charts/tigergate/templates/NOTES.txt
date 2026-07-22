@@ -1,0 +1,60 @@
+TigerGate is installed in namespace "{{ .Release.Namespace }}" as release "{{ .Release.Name }}".
+
+Cluster name : {{ .Values.clusterName }}
+Backend      : {{ .Values.backend.url }}
+Ingest (gRPC): {{ .Values.backend.ingestGrpcAddr }}
+
+Components enabled:
+{{- if .Values.controller.enabled }}
+  ✓ KSPM posture operator      (Deployment {{ include "tigergate.fullname" . }}-operator)
+{{- end }}
+{{- if .Values.admission.enabled }}
+  ✓ Admission controller ({{ .Values.admission.mode }}) (Deployment {{ include "tigergate.fullname" . }}-admission-controller)
+{{- end }}
+{{- if .Values.sensor.enabled }}
+  ✓ TigerEye runtime sensor    (DaemonSet  {{ include "tigergate.fullname" . }}-sensor)
+{{- end }}
+{{- if .Values.nodeScanner.enabled }}
+  ✓ CIS node host-scanner      (DaemonSet  {{ include "tigergate.fullname" . }}-node-scanner)
+{{- end }}
+{{- if .Values.remediation.enabled }}
+  ✓ AI-remediation executor    (Deployment {{ include "tigergate.fullname" . }}-remediator) — WRITE access to Deployments/StatefulSets/DaemonSets
+{{- end }}
+
+Verify rollout:
+
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "tigergate.fullname" . }}-operator
+
+The cluster auto-registers under your org on the operator's first report (~30s).
+Open the TigerGate dashboard → KSPM to see posture, and Runtime → TigerEye for
+live sensor events.
+
+{{- if and .Values.admission.enabled (eq .Values.admission.mode "enforce") }}
+
+⚠  Admission is in ENFORCE mode — non-compliant pods will be DENIED. failurePolicy
+   is "{{ .Values.admission.failurePolicy }}". Start in audit mode if unsure.
+{{- end }}
+{{- if .Values.remediation.enabled }}
+
+⚠  AI-remediation is ENABLED — a separate, narrowly-scoped component
+   ({{ include "tigergate.fullname" . }}-remediator) can patch Deployments/
+   StatefulSets/DaemonSets flagged by a previewed fix. Every other component in
+   this chart is read-only; this is the one exception. Disable any time with
+   `helm upgrade ... --set remediation.enabled=false`.
+{{- end }}
+{{- if not .Values.nodeScanner.enabled }}
+
+ℹ  nodeScanner is OFF. If this is a SELF-HOSTED cluster (k3s / kubeadm /
+   bare-metal control plane), enable it to turn CIS control-plane/kubelet
+   checks from NOT_ASSESSED into real PASS/FAIL:
+   `helm upgrade ... --set nodeScanner.enabled=true`
+   Leave it off on managed clusters (EKS/AKS/GKE/OKE) — it adds nothing there.
+{{- end }}
+{{- if not .Values.backend.apiKey }}
+{{- if not .Values.backend.existingSecret }}
+
+⚠  No backend.apiKey set — components will fail to authenticate. Re-run with
+   --set backend.apiKey=tg_<org-api-key> or --set backend.existingSecret=<name>.
+{{- end }}
+{{- end }}

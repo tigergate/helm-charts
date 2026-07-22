@@ -1,0 +1,72 @@
+name: Lint & Test Charts
+
+# Runs on every PR/push that touches a chart — lints, templates with a few
+# representative value sets, and validates the rendered manifests against the
+# Kubernetes API schema (kubeconform) so a broken template fails CI instead of
+# a customer's `helm install`.
+
+on:
+  pull_request:
+    paths: ["charts/**"]
+  push:
+    branches: [main]
+    paths: ["charts/**"]
+  workflow_dispatch: {}
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        chart: [tigergate]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.0
+
+      - name: helm lint
+        run: helm lint charts/${{ matrix.chart }}
+
+      # Representative value sets — mirrors the real install paths documented
+      # in the chart README/mintlify docs, not just the bare defaults.
+      - name: helm template (minimal install)
+        run: |
+          helm template test charts/${{ matrix.chart }} \
+            --namespace tigergate-system \
+            --set backend.apiKey=tg_ci_test \
+            --set clusterName=ci-test-cluster \
+            > /tmp/minimal.yaml
+
+      - name: helm template (self-hosted, node-scanner + remediation on)
+        run: |
+          helm template test charts/${{ matrix.chart }} \
+            --namespace tigergate-system \
+            --set backend.apiKey=tg_ci_test \
+            --set clusterName=ci-test-cluster \
+            --set nodeScanner.enabled=true \
+            --set remediation.enabled=true \
+            --set admission.mode=enforce \
+            > /tmp/self-hosted.yaml
+
+      - name: "helm template (managed cluster: sensor + operator only)"
+        run: |
+          helm template test charts/${{ matrix.chart }} \
+            --namespace tigergate-system \
+            --set backend.apiKey=tg_ci_test \
+            --set clusterName=ci-test-cluster \
+            --set nodeScanner.enabled=false \
+            > /tmp/managed.yaml
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | tar -xz -C /usr/local/bin kubeconform
+
+      - name: Validate rendered manifests
+        run: |
+          for f in /tmp/minimal.yaml /tmp/self-hosted.yaml /tmp/managed.yaml; do
+            echo "== $f =="
+            kubeconform -strict -summary -kubernetes-version 1.29.0 "$f"
+          done

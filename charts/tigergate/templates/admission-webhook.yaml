@@ -1,0 +1,58 @@
+{{- if .Values.admission.enabled }}
+{{- $fullName := include "tigergate.fullname" . }}
+{{- $svc := printf "%s-admission-controller" $fullName }}
+{{- $ns := .Release.Namespace }}
+{{- $cn := printf "%s.%s.svc" $svc $ns }}
+{{- $altNames := list $cn (printf "%s.%s.svc.cluster.local" $svc $ns) }}
+{{- $ca := genCA "tigergate-admission-ca" 3650 }}
+{{- $cert := genSignedCert $cn nil $altNames 3650 $ca }}
+# Self-signed serving cert for the webhook. CN/SANs match the in-cluster Service
+# DNS so the API server trusts it via the caBundle below. Regenerated on each helm
+# upgrade (Secret + caBundle update together, so they stay consistent).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $fullName }}-admission-tls
+  namespace: {{ $ns }}
+  labels:
+    {{- include "tigergate.labels" . | nindent 4 }}
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ $cert.Cert | b64enc }}
+  tls.key: {{ $cert.Key | b64enc }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ $fullName }}-admission-controller
+  labels:
+    {{- include "tigergate.labels" . | nindent 4 }}
+webhooks:
+  - name: pods.admission-controller.tigergate.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    timeoutSeconds: 5
+    failurePolicy: {{ .Values.admission.failurePolicy }}
+    clientConfig:
+      service:
+        name: {{ $svc }}
+        namespace: {{ $ns }}
+        path: /validate
+        port: 443
+      caBundle: {{ $ca.Cert | b64enc }}
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+    # Never intercept system namespaces or our own — avoids self-deadlock and
+    # breaking control-plane components.
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            - kube-system
+            - kube-node-lease
+            - {{ $ns }}
+{{- end }}

@@ -1,0 +1,56 @@
+{{- if .Values.remediation.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tigergate.fullname" . }}-remediator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tigergate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: remediator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: remediator
+  template:
+    metadata:
+      labels:
+        {{- include "tigergate.labels" . | nindent 8 }}
+        app.kubernetes.io/component: remediator
+    spec:
+      serviceAccountName: {{ include "tigergate.remediatorServiceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: remediator
+          image: {{ include "tigergate.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/tigergate-remediator"]
+          args:
+            - "--interval={{ .Values.remediation.pollInterval }}"
+          env:
+            - name: TG_BACKEND_URL
+              value: {{ .Values.backend.url | quote }}
+            - name: TG_CLUSTER_NAME
+              value: {{ required "clusterName is required (the cluster auto-registers under your org)" .Values.clusterName | quote }}
+            - name: TG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tigergate.secretRef" . }}
+                  key: apiKey
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.remediation.resources | nindent 12 }}
+{{- end }}

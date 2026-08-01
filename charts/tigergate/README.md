@@ -6,7 +6,7 @@ A **single** chart that installs every TigerGate in-cluster agent:
 |---|---|---|
 | **KSPM posture operator** (`controller`) | Deployment ×1 | Read-only cluster scan: posture, inventory, KIEM (RBAC), CIS/NSA controls, drift. Reports to the backend every `controller.scanIntervalPosture`. Also relays the runtime sensor fleet's policy sync (`relay.port`) — see the sensor row below. |
 | **Admission controller** (`admission`) | Deployment + `ValidatingWebhookConfiguration` | Validates pods against Pod Security + image-trust + custom policy. Audit (warn) or enforce (deny). Admission events are **batched** to the backend. |
-| **TigerGate runtime sensor** (`sensor`) | DaemonSet (privileged, eBPF) | Per-node runtime telemetry (process/file/network/privilege), container `tigergate-sensor`. Events stream **directly to the platform** by default (`sensor.ingestGrpcAddr` empty → `backend.ingestGrpcAddr`); policy sync (custom tracing policies + billing gate) routes through this cluster's `controller` relay instead when `TIGEREYE_OPERATOR_ADDR` is set via `sensor.extraArgs`, so every sensor on a node shares one cached fetch rather than each polling the platform independently. Either path lands at `runtime-consumer` upstream. |
+| **TigerGate runtime sensor** (`sensor`) | DaemonSet (privileged, eBPF) | Per-node runtime telemetry (process/file/network/privilege), container `tigergate-sensor`. Events stream **directly to the platform** by default (`sensor.ingestGrpcAddr` empty → `backend.ingestGrpcAddr`); policy sync (custom tracing policies + billing gate) routes through this cluster's `controller` relay instead when `TIGERGATE_OPERATOR_ADDR` is set via `sensor.extraArgs`, so every sensor on a node shares one cached fetch rather than each polling the platform independently. Either path lands at `runtime-consumer` upstream. |
 | _CIS node host-scanner_ (`nodeScanner`, optional) | DaemonSet (privileged) | Per-node CIS control-plane/kubelet controls (arguments + §4.1 file ownership). Off by default; enable on self-hosted clusters. |
 | _AI-remediation executor_ (`remediation`, optional) | Deployment ×1, own ServiceAccount | Previews (dry-run) and applies AI-generated fixes for KSPM findings against Deployments/StatefulSets/DaemonSets. **The only write-capable component in this chart** — off by default. |
 
@@ -38,6 +38,11 @@ helm install tigergate oci://registry.tigergate.dev/charts/tigergate \
   --set clusterName=my-cluster
 ```
 
+Outside the default region, add `--set region=<code>` — the code of the region
+your organization was created in. It wires every component's endpoints, and an
+API key from another region is rejected. See
+<https://docs.tigergate.dev/platform/regions>.
+
 Self-hosted (k3s/kubeadm) — also turn on the node host-scanner:
 
 ```bash
@@ -67,7 +72,7 @@ carries no pod metadata until these flags are set** — none are on by default:
 ```bash
 helm upgrade tigergate oci://registry.tigergate.dev/charts/tigergate \
   --namespace tigergate-system --reuse-values \
-  --set sensor.extraArgs[0]=--export-filename=/var/run/tigereye/tigereye-events.log \
+  --set sensor.extraArgs[0]=--export-filename=/var/run/tigergate/tigergate-events.log \
   --set sensor.extraArgs[1]=--enable-k8s-api=true \
   --set sensor.extraArgs[2]=--enable-tracing-policy-crd=false
 ```
@@ -88,11 +93,11 @@ relay instead of polling the platform directly (one egress point per node
 rather than per sensor):
 
 ```bash
---set sensor.extraArgs[3]=--tigereye-operator-addr=RELEASE-tigergate-operator-relay.NAMESPACE.svc.cluster.local:8090
+--set sensor.extraArgs[3]=--tigergate-operator-addr=RELEASE-tigergate-operator-relay.NAMESPACE.svc.cluster.local:8090
 ```
 
 (there's no dedicated values.yaml key for this yet — set the
-`TIGEREYE_OPERATOR_ADDR` env var directly via `sensor.extraEnv` if you'd
+`TIGERGATE_OPERATOR_ADDR` env var directly via `sensor.extraEnv` if you'd
 rather not hardcode the Service DNS name in `extraArgs`)
 
 ## Images & non-Kubernetes hosts
@@ -102,18 +107,18 @@ Images dual-publish to **Docker Hub** (default) and **GHCR** (mirror), built by
 `tigergate/tigergate-kspm-agent` / `ghcr.io/tigergate/tigergate-kspm-agent`
 (operator + admission-controller + node-scanner + remediator, one multi-binary
 image) and `tigergate/tigergate-sensor` / `ghcr.io/tigergate/tigergate-sensor`
-(built from the separate `tigereye` repo — see its own release workflow).
+(built from the separate `tigergate` repo — see its own release workflow).
 Override `image.repository` / `sensor.image.repository` for a private mirror.
 
 For **bare-metal / VM hosts** (no Kubernetes), install the runtime sensor directly
 instead of via this chart:
 
 ```bash
-curl -fsSL https://download.tigergate.dev/tigereye-sensor/install.sh | sudo bash -s -- \
+curl -fsSL https://download.tigergate.dev/tigergate-sensor/install.sh | sudo bash -s -- \
   --api-key tg_<org-api-key> --cluster my-host
 ```
 
-See [deploy/tigereye-sensor/](../../tigergate/deploy/tigereye-sensor/) in the main repo.
+See [deploy/tigergate-sensor/](../../tigergate/deploy/tigergate-sensor/) in the main repo.
 
 ## Common configurations
 
@@ -155,20 +160,21 @@ helm install tigergate ... --set backend.existingSecret=tg-key
 
 | Key | Default | Notes |
 |---|---|---|
-| `backend.url` | `https://api.tigergate.dev` | Backend base URL (image-policy/custom-rules reads only) |
+| `region` | `""` (= the default region) | **Which TigerGate region this cluster reports to.** Must match the region your org was created in — keys are region-scoped. Sets both endpoints below for every component. Codes: <https://docs.tigergate.dev/platform/regions> |
+| `backend.url` | `""` (from `region`) | Backend base URL (image-policy/custom-rules reads only). Set it **only** to override the region — a self-hosted or staging platform |
 | `backend.apiKey` | `""` | Org `tg_` API key (required unless `existingSecret`) |
 | `backend.existingSecret` | `""` | Pre-created Secret with key `apiKey` |
-| `backend.ingestGrpcAddr` | `sensor.tigergate.dev:443` | gRPC address for scan reports/admission events/node controls — and the sensor's own event-shipping default (see `sensor.ingestGrpcAddr`) |
+| `backend.ingestGrpcAddr` | `""` (from `region`) | gRPC address for scan reports/admission events/node controls, and the sensor's events. Same override rule as `backend.url` |
 | `clusterName` | `""` | **Required.** Customer-chosen cluster name |
 | `controller.enabled` | `true` | KSPM posture operator |
 | `admission.enabled` / `.mode` | `true` / `audit` | `audit` \| `enforce` |
 | `admission.failurePolicy` | `Ignore` | `Ignore` keeps cluster safe if webhook is down |
-| `sensor.enabled` | `true` | TigerEye eBPF DaemonSet |
+| `sensor.enabled` | `true` | TigerGate eBPF DaemonSet |
 | `sensor.ingestGrpcAddr` | `""` | Sensor's **event**-shipping address. Empty → falls back to `backend.ingestGrpcAddr` (direct to platform). Set explicitly to route events through the `controller` relay instead. |
 | `sensor.extraArgs` | `[]` | Extra CLI flags passed to the sensor binary — **required** for event shipping/pod metadata to work at all, see [Enable runtime event shipping](#enable-runtime-event-shipping-and-pod-metadata) above. |
 | `sensor.privileged` / `.hostPID` | `true` / `true` | eBPF needs kernel access |
 | `sensor.image.repository` | `tigergate/tigergate-sensor` | Override for your registry |
-| `relay.port` | `8090` | Port the `controller`'s embedded relay listens on — forwards sensor events when `sensor.ingestGrpcAddr` is set to it, and always serves sensor **policy sync** when `TIGEREYE_OPERATOR_ADDR` targets it |
+| `relay.port` | `8090` | Port the `controller`'s embedded relay listens on — forwards sensor events when `sensor.ingestGrpcAddr` is set to it, and always serves sensor **policy sync** when `TIGERGATE_OPERATOR_ADDR` targets it |
 | `nodeScanner.enabled` | `false` | CIS host-scanner — **on** for self-hosted, **off** for managed (EKS/AKS/GKE/OKE) |
 | `nodeScanner.checkKubeletFiles` | `true` | CIS §4.1 kubelet file ownership/permissions (only meaningful when nodeScanner is on) |
 | `remediation.enabled` | `false` | AI-fix preview/apply executor — the only write-capable component |

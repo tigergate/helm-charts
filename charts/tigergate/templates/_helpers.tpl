@@ -37,11 +37,12 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{/*
-tigergate.sensorIngestAddr: where the sensor ships runtime EVENTS. Defaults
-to the platform's public ingest address (same value the operator itself
-uses, backend.ingestGrpcAddr) — the sensor talks to the platform directly.
-sensor.ingestGrpcAddr overrides this if you'd rather route events through
-the operator relay instead.
+tigergate.sensorIngestAddr: where the sensor ships runtime EVENTS.
+
+Empty is the normal answer: the sensor then resolves the address from `region`
+itself, the same way the operator does, so the two cannot disagree. It returns a
+value only when one was set — sensor.ingestGrpcAddr to route events through the
+operator relay, or backend.ingestGrpcAddr for a self-hosted platform.
 */}}
 {{- define "tigergate.sensorIngestAddr" -}}
 {{- if .Values.sensor.ingestGrpcAddr -}}
@@ -53,8 +54,8 @@ the operator relay instead.
 
 {{/*
 tigergate.sensorOperatorAddr: this cluster's KSPM operator relay Service —
-the sensor's POLICY sync transport when TIGEREYE_OPERATOR_ADDR is set
-(tigereye/pkg/tigereye/control.go's beatViaOperator, served by
+the sensor's POLICY sync transport when TIGERGATE_OPERATOR_ADDR is set
+(tigergate/pkg/tigergate/control.go's beatViaOperator, served by
 tigergate-operator's GetPolicy RPC, workers/kspm/internal/relay/policy.go).
 */}}
 {{- define "tigergate.sensorOperatorAddr" -}}

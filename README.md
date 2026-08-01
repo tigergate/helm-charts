@@ -4,7 +4,7 @@ Official Helm charts for TigerGate's in-cluster agents.
 
 | Chart | Purpose |
 |---|---|
-| [`charts/tigergate`](charts/tigergate) | KSPM posture operator, admission-control webhook, per-node CIS host-scanner, AI-remediation executor, and the TigerEye runtime eBPF sensor — one install for everything that runs in your cluster. |
+| [`charts/tigergate`](charts/tigergate) | KSPM posture operator, admission-control webhook, per-node CIS host-scanner, AI-remediation executor, and the TigerGate runtime eBPF sensor — one install for everything that runs in your cluster. |
 
 ## Usage
 

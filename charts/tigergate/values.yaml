@@ -25,19 +25,49 @@ fullnameOverride: ""
 # node-scanner, remediator).
 imagePullSecrets: []          # e.g. [{ name: regcred }]
 
+# ── Which TigerGate region this cluster reports to ──────────────────────────
+#
+#   --set region=<code>
+#
+# TigerGate runs as independent regional silos: no data crosses a region
+# boundary, so this MUST be the region your organization was created in — an API
+# key issued in one region is rejected by every other. Codes and their endpoints
+# are listed at https://docs.tigergate.dev/platform/regions (or run
+# `tigergate regions`).
+#
+# Empty means us1 (N. Virginia) — the region every install used before this value
+# existed, so leaving it unset changes nothing for a US organization. Setting it
+# wires BOTH endpoints below: every component (operator, admission controller,
+# node scanner, remediator and the runtime sensor) resolves them from this one
+# code, so they cannot end up disagreeing.
+#
+# Each component logs the region and both endpoints it resolved at startup, so
+# `kubectl logs` answers "which region is this cluster reporting to".
+#
+# An unknown code is a hard error inside each binary, never a fall back to the
+# default region: shipping a cluster's posture reports and kernel events to the
+# wrong country is not something a typo should be able to do quietly.
+region: ""
+
 # ── Shared connection ───────────────────────────────────────────────────────
 backend:
-  url: "https://api.tigergate.dev"
+  # Endpoint overrides. LEAVE THESE EMPTY for a TigerGate SaaS region — `region`
+  # above resolves both, and a hardcoded URL here is how a cluster ends up
+  # reporting to a region it does not belong to. Set them only for a self-hosted
+  # or staging platform, whose hosts are in no registry; an explicit URL always
+  # wins over `region`.
+  url: ""
   apiKey: ""                  # ORG API key (tg_…). Required unless existingSecret is set.
   # Reference a pre-created Secret instead of templating one. Must contain key `apiKey`.
   existingSecret: ""
-  # gRPC ingest address for scan reports, admission events, and node controls —
-  # ALL of that ships here directly, never through the Node.js backend (backend.url
-  # is used only for the low-volume image-policy/custom-rules reads and the sensor's
-  # HTTP event path). Default is the platform's public ingest endpoint (TLS, port
-  # 443 for egress-firewall friendliness) — override with an in-cluster Service DNS
-  # name only for a self-hosted platform running in the same cluster as this chart.
-  ingestGrpcAddr: "sensor.tigergate.dev:443"
+  # gRPC ingest address for scan reports, admission events, node controls and
+  # runtime events — ALL of that ships here directly, never through the Node.js
+  # backend (backend.url is used only for the low-volume image-policy /
+  # custom-rules reads and the sensor's heartbeat). Empty resolves it from
+  # `region`: that region's public ingest endpoint, TLS on port 443 for
+  # egress-firewall friendliness. Set it only for a self-hosted platform, or to
+  # an in-cluster Service DNS name when the platform runs in this same cluster.
+  ingestGrpcAddr: ""
 
 # Customer-chosen cluster name, shared by all components. The cluster auto-registers
 # under the org on the operator's first report — no separate registration step.
@@ -94,17 +124,17 @@ admission:
     requests: { cpu: "50m", memory: "64Mi" }
     limits: { cpu: "200m", memory: "256Mi" }
 
-# ── 3. TigerEye runtime sensor (eBPF DaemonSet) ─────────────────────────────
+# ── 3. TigerGate runtime sensor (eBPF DaemonSet) ─────────────────────────────
 # One pod per node. Collects runtime events (process/file/network/privilege) via
 # eBPF and streams them over gRPC to this cluster's tigergate-operator relay
 # (see `relay:` above), which forwards on to tigergate-go-ingester for
-# tigereye-detect. Requires a privileged container with host PID + kernel
+# tigergate-detect. Requires a privileged container with host PID + kernel
 # access for eBPF.
 sensor:
   enabled: true
   # Dual-published to Docker Hub (default here, `docker pull tigergate/tigergate-sensor`)
   # and GHCR (ghcr.io/tigergate/tigergate-sensor) as a mirror. Built from the
-  # tigereye repo (Cilium Tetragon fork) — see that repo's Dockerfile for how
+  # tigergate repo (Cilium Tetragon fork) — see that repo's Dockerfile for how
   # the container itself is renamed from upstream's "tetragon" to
   # "tigergate-sensor". Override `repository` for a private registry mirror.
   image:

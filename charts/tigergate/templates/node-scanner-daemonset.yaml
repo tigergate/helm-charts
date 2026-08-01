@@ -51,6 +51,14 @@ spec:
             - "--interval={{ .Values.nodeScanner.interval }}"
             {{- end }}
           env:
+            # Endpoint ladder, applied by the BINARY (not here): an explicit URL
+            # wins, then $TG_REGION, then the default region. Each var is emitted
+            # only when actually set, so a chart with neither behaves exactly as
+            # it did before `region` existed.
+            {{- if .Values.region }}
+            - name: TG_REGION
+              value: {{ .Values.region | quote }}
+            {{- end }}
             - name: HOST_PROC
               value: "/host/proc"
             {{- if .Values.nodeScanner.checkKubeletFiles }}
@@ -65,8 +73,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            {{- if .Values.backend.ingestGrpcAddr }}
             - name: TG_INGEST_GRPC_ADDR
               value: {{ .Values.backend.ingestGrpcAddr | quote }}
+            {{- end }}
             - name: TG_CLUSTER_NAME
               value: {{ required "clusterName is required" .Values.clusterName | quote }}
             - name: TG_API_KEY

@@ -12,7 +12,7 @@ Components enabled:
   ✓ Admission controller ({{ .Values.admission.mode }}) (Deployment {{ include "tigergate.fullname" . }}-admission-controller)
 {{- end }}
 {{- if .Values.sensor.enabled }}
-  ✓ TigerEye runtime sensor    (DaemonSet  {{ include "tigergate.fullname" . }}-sensor)
+  ✓ TigerGate runtime sensor    (DaemonSet  {{ include "tigergate.fullname" . }}-sensor)
 {{- end }}
 {{- if .Values.nodeScanner.enabled }}
   ✓ CIS node host-scanner      (DaemonSet  {{ include "tigergate.fullname" . }}-node-scanner)
@@ -27,7 +27,7 @@ Verify rollout:
   kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "tigergate.fullname" . }}-operator
 
 The cluster auto-registers under your org on the operator's first report (~30s).
-Open the TigerGate dashboard → KSPM to see posture, and Runtime → TigerEye for
+Open the TigerGate dashboard → KSPM to see posture, and Runtime → TigerGate for
 live sensor events.
 
 {{- if and .Values.admission.enabled (eq .Values.admission.mode "enforce") }}

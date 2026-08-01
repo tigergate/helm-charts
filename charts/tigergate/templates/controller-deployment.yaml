@@ -41,10 +41,22 @@ spec:
             - name: relay
               containerPort: {{ .Values.relay.port }}
           env:
+            # Endpoint ladder, applied by the BINARY (not here): an explicit URL
+            # wins, then $TG_REGION, then the default region. Each var is emitted
+            # only when actually set, so a chart with neither behaves exactly as
+            # it did before `region` existed.
+            {{- if .Values.region }}
+            - name: TG_REGION
+              value: {{ .Values.region | quote }}
+            {{- end }}
+            {{- if .Values.backend.url }}
             - name: TG_BACKEND_URL
               value: {{ .Values.backend.url | quote }}
+            {{- end }}
+            {{- if .Values.backend.ingestGrpcAddr }}
             - name: TG_INGEST_GRPC_ADDR
               value: {{ .Values.backend.ingestGrpcAddr | quote }}
+            {{- end }}
             - name: TG_CLUSTER_NAME
               value: {{ required "clusterName is required (the cluster auto-registers under your org)" .Values.clusterName | quote }}
             - name: TG_API_KEY

@@ -81,7 +81,7 @@ helm upgrade tigergate oci://registry.tigergate.dev/charts/tigergate \
 (the path itself is just a rotated local log). `--enable-k8s-api` adds
 `pod.namespace`/`pod.name`/`container.name` to every event (the chart's
 ClusterRole already grants the `pods`/`namespaces` `get`/`list`/`watch` this
-needs). `--enable-tracing-policy-crd=false` disables Tetragon's native
+needs). `--enable-tracing-policy-crd=false` disables the sensor's native
 CRD-based policy loading, which this chart doesn't use (policies come from
 the dashboard via the heartbeat/`GetPolicy` path instead) and which otherwise
 errors on missing cluster-scoped CRD RBAC once `--enable-k8s-api` is on.

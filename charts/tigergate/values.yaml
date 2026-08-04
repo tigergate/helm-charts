@@ -81,7 +81,7 @@ clusterName: ""
 # tab for the imagePullSecrets pairing.
 image:
   repository: tigergate/tigergate-kspm-agent
-  tag: "0.2.0"
+  tag: "latest"
   pullPolicy: IfNotPresent
 
 # ── 1. KSPM posture operator ────────────────────────────────────────────────
@@ -134,12 +134,11 @@ sensor:
   enabled: true
   # Dual-published to Docker Hub (default here, `docker pull tigergate/tigergate-sensor`)
   # and GHCR (ghcr.io/tigergate/tigergate-sensor) as a mirror. Built from the
-  # tigergate repo (Cilium Tetragon fork) — see that repo's Dockerfile for how
-  # the container itself is renamed from upstream's "tetragon" to
-  # "tigergate-sensor". Override `repository` for a private registry mirror.
+  # tigergate runtime-sensor repo — see that repo's Dockerfile. Override
+  # `repository` for a private registry mirror.
   image:
     repository: tigergate/tigergate-sensor
-    tag: "0.1.0"
+    tag: "latest"
     pullPolicy: IfNotPresent
   # In-cluster gRPC address of the operator's relay. Leave "" to use the
   # chart-computed default (this release's operator-relay Service DNS name) —
@@ -153,6 +152,37 @@ sensor:
   hostNetwork: false
   # Mount the host kernel debug + bpf fs (needed by libbpf-based probes).
   mountKernelDebug: true
+  # Access the Kubernetes API to associate each kernel event with the pod /
+  # namespace / labels that produced it. The sensor binary defaults this OFF
+  # (--enable-k8s-api=false → host-only events), so the chart turns it on:
+  # runtime findings and cross-product correlation need pod identity to be
+  # useful. Uses the pods/namespaces watch RBAC the ServiceAccount already grants.
+  # Set false only if you deliberately want raw host-only events.
+  enableK8sApi: true
+  # TigerGate distributes tracing policies as files (the operator relay writes
+  # them into the sensor's tracing-policy-dir), so the CRD-based policy controller
+  # is left OFF — with it on, enabling the K8s API makes the sensor block on
+  # startup waiting for TracingPolicy CRDs that are never installed. Set true
+  # (and install the sensor's TracingPolicy CRDs) only if you deliver policies as
+  # CRDs. Ignored when enableK8sApi is false.
+  enableTracingPolicyCrd: false
+  # Runtime event shipping. The sensor ships kernel events to the platform by
+  # TAPPING the JSON event exporter — that Send() hook is where each event batch
+  # is streamed to the ingest. The binary DISABLES that exporter by default
+  # (--export-filename ""), so with it off the sensor loads its probes, logs
+  # "Listening for events...", and ships NOTHING (BPF captures, but Send()/Ship()
+  # never run). The chart turns it on. The on-disk file is a bounded byproduct
+  # written into an in-pod emptyDir (never the host filesystem, so it cannot cause
+  # node DiskPressure); the events you care about leave over gRPC, not this file.
+  export:
+    enabled: true
+    # File the exporter writes to, inside the emptyDir mounted at its parent dir.
+    filename: /var/run/tigergate/tigergate-sensor.log
+    # Rotation caps bound the emptyDir footprint: maxSizeMb x (maxBackups + 1).
+    # 10 x 4 = 40MB worst case; compressed backups make it far less in practice.
+    maxSizeMb: 10
+    maxBackups: 3
+    compress: true
   extraEnv: []                # e.g. [{ name: LOG_LEVEL, value: info }]
   extraArgs: []
   # Run on every node incl. tainted control-plane nodes.

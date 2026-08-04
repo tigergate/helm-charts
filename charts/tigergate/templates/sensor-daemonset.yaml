@@ -1,4 +1,21 @@
 {{- if .Values.sensor.enabled }}
+{{- /*
+  Runtime-event export config, resolved defensively. `helm upgrade --reuse-values`
+  does NOT merge newly-added chart keys into an existing release's values, so a
+  release created before sensor.export existed would nil-deref .Values.sensor.export.
+  Defaulting through a local dict avoids that AND keeps the exporter ON by default —
+  it is REQUIRED for runtime events to ship (the sensor ships from the exporter's
+  Send() hook; with it off, BPF captures events but none leave the node). Set
+  sensor.export.enabled=false to opt out explicitly.
+*/}}
+{{- $export := .Values.sensor.export | default dict }}
+{{- $exportEnabled := true }}
+{{- if kindIs "bool" $export.enabled }}{{- $exportEnabled = $export.enabled }}{{- end }}
+{{- $exportFilename := $export.filename | default "/var/run/tigergate/tigergate-sensor.log" }}
+{{- $exportMaxSize := $export.maxSizeMb | default 10 }}
+{{- $exportMaxBackups := $export.maxBackups | default 3 }}
+{{- $exportCompress := true }}
+{{- if kindIs "bool" $export.compress }}{{- $exportCompress = $export.compress }}{{- end }}
 # TigerGate runtime sensor (one pod per node). Loads eBPF probes to observe process
 # execution, file access, network connections and privilege changes, and streams
 # the normalized event batches over gRPC to this cluster's tigergate-operator
@@ -55,6 +72,34 @@ spec:
           image: {{ include "tigergate.sensorImage" . | quote }}
           imagePullPolicy: {{ .Values.sensor.image.pullPolicy }}
           args:
+            {{- if .Values.sensor.enableK8sApi }}
+            # Associate kernel events with the pod/namespace/labels that produced
+            # them (sensor defaults --enable-k8s-api to false → host-only events).
+            - --enable-k8s-api
+            # TigerGate ships tracing policies as FILES (tracing-policy-dir), not
+            # as CRDs. Enabling the K8s API otherwise starts the sensor's CRD
+            # controller-manager, which blocks on startup waiting for TracingPolicy
+            # CRDs that are never installed. Turn it off so pod-metadata enrichment
+            # works without a CRD dependency. Set sensor.enableTracingPolicyCrd=true
+            # (and install the CRDs) if you distribute policies as CRDs instead.
+            {{- if not .Values.sensor.enableTracingPolicyCrd }}
+            - --enable-tracing-policy-crd=false
+            {{- end }}
+            {{- end }}
+            {{- if $exportEnabled }}
+            # Enable the JSON event exporter. This is REQUIRED for runtime events
+            # to reach the platform: the sensor ships each event batch to the
+            # ingest from the exporter's Send() hook, so with the exporter off
+            # (the binary's default) BPF captures events but none are shipped.
+            # The file itself lands in an in-pod emptyDir (see volumes), bounded
+            # by the rotation caps below.
+            - --export-filename={{ $exportFilename }}
+            - --export-file-max-size-mb={{ $exportMaxSize }}
+            - --export-file-max-backups={{ $exportMaxBackups }}
+            {{- if $exportCompress }}
+            - --export-file-compress
+            {{- end }}
+            {{- end }}
             {{- with .Values.sensor.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -114,6 +159,13 @@ spec:
               mountPath: /sys/fs/bpf
               mountPropagation: Bidirectional
             {{- end }}
+            {{- if $exportEnabled }}
+            # In-pod ephemeral store for the JSON export file + its rotated
+            # backups. Mounting the file's parent dir keeps the write off the host
+            # filesystem so a busy node can't hit DiskPressure from event volume.
+            - name: tigergate-export
+              mountPath: {{ dir $exportFilename }}
+            {{- end }}
           resources:
             {{- toYaml .Values.sensor.resources | nindent 12 }}
       volumes:
@@ -126,5 +178,10 @@ spec:
           hostPath:
             path: /sys/fs/bpf
             type: DirectoryOrCreate
+        {{- end }}
+        {{- if $exportEnabled }}
+        - name: tigergate-export
+          emptyDir:
+            sizeLimit: {{ mul $exportMaxSize (add $exportMaxBackups 1) }}Mi
         {{- end }}
 {{- end }}

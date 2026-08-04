@@ -1,0 +1,82 @@
+name: Release Chart
+
+# Packages a chart and pushes it to the OCI registry every install command in
+# the product (backend HELM_CHART constant, in-app setup guide, mintlify docs)
+# already points at: oci://registry.tigergate.dev/charts/<name>. Not a
+# classic index.yaml/GitHub-Pages Helm repo (unlike e.g. Datadog's
+# helm.datadoghq.com) — TigerGate already runs its own private OCI registry,
+# so this reuses it instead of standing up a second distribution mechanism.
+#
+# Trigger:
+#   • push a tag:   git tag tigergate-chart-v0.2.0 && git push origin tigergate-chart-v0.2.0
+#   • manually:     Actions ▸ Release Chart ▸ Run workflow (enter the chart + version)
+#
+# Required repo secrets (registry.tigergate.dev is TigerGate's own private OCI
+# registry — these are NOT Docker Hub/GHCR credentials):
+#   HELM_REGISTRY_USERNAME / HELM_REGISTRY_PASSWORD
+
+on:
+  push:
+    tags: ["*-chart-v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      chart:
+        description: "Chart directory under charts/, e.g. tigergate"
+        required: true
+        default: tigergate
+      version:
+        description: "Chart version, e.g. 0.2.0 (must match Chart.yaml's version — bump that first)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.0
+
+      - id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CHART="${{ inputs.chart }}"
+            VERSION="${{ inputs.version }}"
+          else
+            # tigergate-chart-v0.2.0 -> chart=tigergate version=0.2.0
+            REF="${GITHUB_REF_NAME}"
+            CHART="${REF%-chart-v*}"
+            VERSION="${REF##*-chart-v}"
+          fi
+          echo "chart=${CHART}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Releasing charts/${CHART} @ ${VERSION}"
+
+      - name: Verify Chart.yaml version matches the release version
+        run: |
+          DECLARED="$(grep '^version:' 'charts/${{ steps.meta.outputs.chart }}/Chart.yaml' | awk '{print $2}')"
+          if [ "$DECLARED" != "${{ steps.meta.outputs.version }}" ]; then
+            echo "::error::Chart.yaml version ($DECLARED) does not match the release version (${{ steps.meta.outputs.version }}) — bump Chart.yaml first."
+            exit 1
+          fi
+
+      - name: helm lint
+        run: helm lint "charts/${{ steps.meta.outputs.chart }}"
+
+      - name: helm package
+        run: helm package "charts/${{ steps.meta.outputs.chart }}" -d /tmp/packaged
+
+      - name: helm registry login
+        run: |
+          echo "${{ secrets.HELM_REGISTRY_PASSWORD }}" | helm registry login registry.tigergate.dev \
+            --username "${{ secrets.HELM_REGISTRY_USERNAME }}" --password-stdin
+
+      - name: helm push
+        run: |
+          helm push "/tmp/packaged/${{ steps.meta.outputs.chart }}-${{ steps.meta.outputs.version }}.tgz" \
+            oci://registry.tigergate.dev/charts
+          echo "Pushed oci://registry.tigergate.dev/charts/${{ steps.meta.outputs.chart }}:${{ steps.meta.outputs.version }}"

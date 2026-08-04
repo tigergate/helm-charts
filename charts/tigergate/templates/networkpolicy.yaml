@@ -1,0 +1,35 @@
+{{- if .Values.network.restrictEgress }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "tigergate.fullname" . }}-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tigergate.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Egress
+  # Ingress is intentionally unrestricted (the API server must reach the admission
+  # webhook). Egress is capped to DNS + 443 (the backend over HTTPS and the
+  # Kubernetes API server) + 50051 (gRPC ingest — scan reports, admission events,
+  # node controls, and remediation-job polling). Vanilla NetworkPolicy can't match
+  # the backend by hostname, so this is the port-level equivalent of "backend
+  # only". NOTE: this does not constrain the sensor when sensor.hostNetwork=true
+  # (host-network pods bypass NetworkPolicy).
+  egress:
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 50051
+{{- end }}

@@ -1,0 +1,132 @@
+{{- if .Values.nodeScanner.enabled }}
+# Optional privileged per-node CIS host-scanner (one pod per node). Reads the HOST
+# /proc (mounted read-only) to evaluate the CIS control-plane + kubelet ARGUMENT
+# controls, plus (when checkKubeletFiles is set) the CIS §4.1 kubelet FILE
+# ownership/permission controls, and reports PASS/FAIL via the gRPC ingest
+# path. ONLY READS the host; never writes it.
+#
+#   ENABLE on self-hosted clusters: k3s, kubeadm, bare-metal/VM control planes.
+#   LEAVE OFF on managed clusters: EKS, AKS, GKE, OKE (see values.yaml).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "tigergate.fullname" . }}-node-scanner
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tigergate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-scanner
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: node-scanner
+  template:
+    metadata:
+      labels:
+        {{- include "tigergate.labels" . | nindent 8 }}
+        app.kubernetes.io/component: node-scanner
+    spec:
+      serviceAccountName: {{ include "tigergate.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # hostPID: see the kernel /proc of every process on the node so we can read
+      # the control-plane / kubelet command lines.
+      hostPID: true
+      # Tolerate control-plane taints — the apiserver/etcd/scheduler/cm processes
+      # we evaluate run ON the control-plane nodes, which are commonly tainted.
+      tolerations:
+        - operator: "Exists"
+      containers:
+        - name: node-scanner
+          image: {{ include "tigergate.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/node-scanner"]
+          args:
+            {{- if eq .Values.nodeScanner.runMode "once" }}
+            - "--once=true"
+            {{- else }}
+            - "--once=false"
+            - "--interval={{ .Values.nodeScanner.interval }}"
+            {{- end }}
+          env:
+            # Endpoint ladder, applied by the BINARY (not here): an explicit URL
+            # wins, then $TG_REGION, then the default region. Each var is emitted
+            # only when actually set, so a chart with neither behaves exactly as
+            # it did before `region` existed.
+            {{- if .Values.region }}
+            - name: TG_REGION
+              value: {{ .Values.region | quote }}
+            {{- end }}
+            - name: HOST_PROC
+              value: "/host/proc"
+            {{- if .Values.nodeScanner.checkKubeletFiles }}
+            # CIS §4.1 kubelet file ownership/permissions (kubelet.conf,
+            # config.yaml, the kubeadm systemd drop-in) — read-only stat only,
+            # never written. No-ops safely on distros without these paths
+            # (managed EKS/GKE/AKS nodes, non-kubeadm installs).
+            - name: HOST_ROOT
+              value: "/host-root"
+            {{- end }}
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            {{- if .Values.backend.ingestGrpcAddr }}
+            - name: TG_INGEST_GRPC_ADDR
+              value: {{ .Values.backend.ingestGrpcAddr | quote }}
+            {{- end }}
+            - name: TG_CLUSTER_NAME
+              value: {{ required "clusterName is required" .Values.clusterName | quote }}
+            - name: TG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tigergate.secretRef" . }}
+                  key: apiKey
+          securityContext:
+            # privileged is REQUIRED to read root-owned processes' /proc/<pid>/cmdline
+            # (CAP_SYS_PTRACE alone is insufficient across all CRIs / kernel configs).
+            # The container still only READS the host — root FS is read-only and no
+            # host paths are writable.
+            privileged: true
+            readOnlyRootFilesystem: true
+            runAsNonRoot: false
+            runAsUser: 0
+          volumeMounts:
+            - name: host-proc
+              mountPath: /host/proc
+              readOnly: true
+            {{- if .Values.nodeScanner.checkKubeletFiles }}
+            - name: host-kubernetes-conf
+              mountPath: /host-root/etc/kubernetes
+              readOnly: true
+            - name: host-kubelet-lib
+              mountPath: /host-root/var/lib/kubelet
+              readOnly: true
+            - name: host-kubelet-service
+              mountPath: /host-root/etc/systemd/system/kubelet.service.d
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.nodeScanner.resources | nindent 12 }}
+      volumes:
+        - name: host-proc
+          hostPath:
+            path: /proc
+            type: Directory
+        {{- if .Values.nodeScanner.checkKubeletFiles }}
+        - name: host-kubernetes-conf
+          hostPath:
+            path: /etc/kubernetes
+            type: DirectoryOrCreate
+        - name: host-kubelet-lib
+          hostPath:
+            path: /var/lib/kubelet
+            type: DirectoryOrCreate
+        - name: host-kubelet-service
+          hostPath:
+            path: /etc/systemd/system/kubelet.service.d
+            type: DirectoryOrCreate
+        {{- end }}
+{{- end }}

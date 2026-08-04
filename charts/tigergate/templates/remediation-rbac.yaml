@@ -1,0 +1,66 @@
+{{- if .Values.remediation.enabled }}
+# A SECOND, deliberately separate identity from the primary read-only
+# ServiceAccount — see values.yaml's remediation section comment. Every other
+# TigerGate component in this chart shares one read-only ClusterRole; this one
+# exists only so a bug in that much larger read surface can never reach write
+# capability, and vice versa. get+patch only, and only on the 3 workload-
+# controller kinds remediation ever touches — never pods, secrets, RBAC, jobs/
+# cronjobs (immutable/future-run-only pod templates), or anything else.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "tigergate.remediatorServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tigergate.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "tigergate.fullname" . }}-remediate
+  labels:
+    {{- include "tigergate.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "tigergate.fullname" . }}-remediate
+  labels:
+    {{- include "tigergate.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "tigergate.fullname" . }}-remediate
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "tigergate.remediatorServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# The remediator also needs the standing read-only surface (to walk the
+# ownerReferences chain from a finding's recorded resource up to the true
+# root controller). Reuses the EXISTING read-only ClusterRole via a second
+# binding for this ServiceAccount, rather than duplicating its rules — reads
+# were never the sensitive part of this design; only the narrow get+patch
+# ClusterRole above is new write capability.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "tigergate.fullname" . }}-remediate-read
+  labels:
+    {{- include "tigergate.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "tigergate.fullname" . }}-read
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "tigergate.remediatorServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

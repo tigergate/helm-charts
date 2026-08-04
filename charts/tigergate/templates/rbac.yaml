@@ -1,0 +1,83 @@
+{{- if .Values.controller.enabled }}
+# Strictly read-only cluster access for the posture operator. Posture + inventory
+# + KIEM never mutate cluster state. The admission webhook and the eBPF sensor do
+# not use cluster RBAC (the webhook is called by the API server; the sensor reads
+# the kernel), but they share this ServiceAccount for a single install identity.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "tigergate.fullname" . }}-read
+  labels:
+    {{- include "tigergate.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - namespaces
+      - nodes
+      - services
+      - serviceaccounts
+      - secrets
+      - configmaps
+      - replicationcontrollers
+      - resourcequotas
+      - limitranges
+      - persistentvolumes
+      - persistentvolumeclaims
+      - endpoints
+    verbs: ["get", "list", "watch"]
+  # Read-only kubelet config via the API server proxy (CIS §4.2 evaluator):
+  # GET /api/v1/nodes/<node>/proxy/configz. 'get' only — never exec/run.
+  - apiGroups: [""]
+    resources: ["nodes/proxy"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies", "ingresses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "clusterroles", "rolebindings", "clusterrolebindings"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations", "validatingadmissionpolicies"]
+    verbs: ["get", "list", "watch"]
+  # The runtime sensor with --enable-k8s-api runs its CRD controller-manager,
+  # which lists CustomResourceDefinitions at startup (to discover its
+  # TracingPolicy CRDs). Without this it logs "cannot list customresourcedefinitions
+  # … forbidden" in a loop. get/list/watch only — the sensor never mutates.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  # resilience.go: HPA min==max / dangling-scaleTargetRef checks (hpaFindings)
+  # and PriorityClass-doesn't-exist checks (priorityClassFindings) — both
+  # cluster-scoped List calls.
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["scheduling.k8s.io"]
+    resources: ["priorityclasses"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "tigergate.fullname" . }}-read
+  labels:
+    {{- include "tigergate.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "tigergate.fullname" . }}-read
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "tigergate.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

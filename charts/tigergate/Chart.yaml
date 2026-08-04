@@ -1,0 +1,34 @@
+apiVersion: v2
+name: tigergate
+description: >-
+  TigerGate in-cluster agents in a single chart — the KSPM posture operator,
+  the admission-control webhook, the optional per-node CIS host-scanner, the
+  optional AI-remediation executor, and the TigerGate runtime eBPF sensor.
+  Works on self-hosted (k3s/kubeadm/bare-metal) and managed (EKS/AKS/GKE/OKE)
+  clusters alike. One org API key, one cluster name, one install.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.23.0-0"
+keywords:
+  - security
+  - cnapp
+  - kspm
+  - kiem
+  - runtime
+  - ebpf
+  - admission-controller
+  - remediation
+  - kubernetes
+  - eks
+  - aks
+  - gke
+  - oke
+home: https://tigergate.dev
+sources:
+  - https://github.com/tigergate/tigergate
+maintainers:
+  - name: TigerGate
+    url: https://tigergate.dev
+annotations:
+  category: Security

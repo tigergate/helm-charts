@@ -12,13 +12,6 @@ spec:
       app.kubernetes.io/instance: {{ .Release.Name }}
   policyTypes:
     - Egress
-  # Ingress is intentionally unrestricted (the API server must reach the admission
-  # webhook). Egress is capped to DNS + 443 (the backend over HTTPS) + 50051
-  # (gRPC ingest — scan reports, admission events, node controls, and
-  # remediation-job polling) + the Kubernetes API server. Vanilla NetworkPolicy
-  # can't match the backend by hostname, so this is the port-level equivalent of
-  # "backend only". NOTE: this does not constrain the sensor when
-  # sensor.hostNetwork=true (host-network pods bypass NetworkPolicy).
   egress:
     - to: []
       ports:
@@ -32,29 +25,10 @@ spec:
           port: 443
         - protocol: TCP
           port: 50051
-    # In-cluster sensor -> operator relay (controller-deployment.yaml's
-    # -operator-relay Service). Every sensor streams its event batches and polls
-    # GetPolicy here rather than dialing the platform directly, so omitting this
-    # breaks the entire runtime pipeline while the sensor still reports healthy
-    # and logs "Listening for events..." — the only symptom is a recurring
-    # "operator policy fetch failed ... connection refused".
     - to: []
       ports:
         - protocol: TCP
           port: {{ .Values.relay.port }}
-    # The API server must be allowed by its ENDPOINT port, not the 443 of the
-    # `kubernetes` Service. Egress rules are evaluated after the ClusterIP is
-    # DNAT'd to the endpoint, so a connection to 10.43.0.1:443 is matched as
-    # <node-ip>:6443 and the 443 rule above never applies. Omitting this denies
-    # API server access to every selected pod. The failure is asymmetric and
-    # easy to misread: long-lived clients (operator, admission controller) keep
-    # working on connections established before the CNI programmed the policy,
-    # so only the restarting sensor visibly CrashLoops — with an instant
-    # "connection refused", not a timeout.
-    #
-    # The port is distro-specific (6443 k3s/kubeadm/kind, 8443 minikube, 16443
-    # microk8s, 443 managed), so network.apiServerPorts defaults to all of them
-    # rather than one guess that silently breaks every other environment.
     - to: []
       ports:
         {{- range .Values.network.apiServerPorts | default (list 6443 8443 16443) }}

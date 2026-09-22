@@ -1,96 +1,23 @@
-# TigerGate unified agent chart. Minimal install:
-#
-#   helm install tigergate oci://registry.tigergate.dev/charts/tigergate \
-#     --namespace tigergate-system --create-namespace \
-#     --set backend.apiKey=tg_<org-api-key> \
-#     --set clusterName=my-cluster
-#
-# One ORG API key (tg_…) authorizes every component; the cluster auto-registers
-# under your org on the operator's first report — no separate registration step.
-#
-# ── Works on every KSPM environment ─────────────────────────────────────────
-# Self-hosted (k3s / kubeadm / bare-metal-VM clusters) AND managed control
-# planes (EKS / AKS / GKE / OKE) run the SAME chart — the only thing that
-# should differ between them is `nodeScanner.enabled` (see that section below):
-# turn it ON for self-hosted so CIS control-plane/kubelet checks resolve to
-# real PASS/FAIL instead of NOT_ASSESSED, and leave it OFF on managed clusters
-# where the control plane isn't reachable from inside the cluster at all.
-# Everything else (operator, admission-controller, remediator) is generic
-# client-go against the Kubernetes API and needs no per-flavor configuration.
-
 nameOverride: ""
 fullnameOverride: ""
 
-# Pull secrets applied to every pod (operator, admission-controller, sensor,
-# node-scanner, remediator).
-imagePullSecrets: []          # e.g. [{ name: regcred }]
+imagePullSecrets: []
 
-# ── Which TigerGate region this cluster reports to ──────────────────────────
-#
-#   --set region=<code>
-#
-# TigerGate runs as independent regional silos: no data crosses a region
-# boundary, so this MUST be the region your organization was created in — an API
-# key issued in one region is rejected by every other. Codes and their endpoints
-# are listed at https://docs.tigergate.dev/platform/regions (or run
-# `tigergate regions`).
-#
-# Empty means us1 (N. Virginia) — the region every install used before this value
-# existed, so leaving it unset changes nothing for a US organization. Setting it
-# wires BOTH endpoints below: every component (operator, admission controller,
-# node scanner, remediator and the runtime sensor) resolves them from this one
-# code, so they cannot end up disagreeing.
-#
-# Each component logs the region and both endpoints it resolved at startup, so
-# `kubectl logs` answers "which region is this cluster reporting to".
-#
-# An unknown code is a hard error inside each binary, never a fall back to the
-# default region: shipping a cluster's posture reports and kernel events to the
-# wrong country is not something a typo should be able to do quietly.
 region: ""
 
-# ── Shared connection ───────────────────────────────────────────────────────
 backend:
-  # Endpoint overrides. LEAVE THESE EMPTY for a TigerGate SaaS region — `region`
-  # above resolves both, and a hardcoded URL here is how a cluster ends up
-  # reporting to a region it does not belong to. Set them only for a self-hosted
-  # or staging platform, whose hosts are in no registry; an explicit URL always
-  # wins over `region`.
   url: ""
-  apiKey: ""                  # ORG API key (tg_…). Required unless existingSecret is set.
-  # Reference a pre-created Secret instead of templating one. Must contain key `apiKey`.
+  apiKey: ""
   existingSecret: ""
-  # gRPC ingest address for scan reports, admission events, node controls and
-  # runtime events — ALL of that ships here directly, never through the Node.js
-  # backend (backend.url is used only for the low-volume image-policy /
-  # custom-rules reads and the sensor's heartbeat). Empty resolves it from
-  # `region`: that region's public ingest endpoint, TLS on port 443 for
-  # egress-firewall friendliness. Set it only for a self-hosted platform, or to
-  # an in-cluster Service DNS name when the platform runs in this same cluster.
   ingestGrpcAddr: ""
 
-# Customer-chosen cluster name, shared by all components. The cluster auto-registers
-# under the org on the operator's first report — no separate registration step.
 clusterName: ""
 
-# Image for the Go agents (operator, admission-controller, node-scanner,
-# remediator) — one multi-binary image, dual-published by
-# .github/workflows/agents-release.yml to Docker Hub (default here) and GHCR
-# (ghcr.io/tigergate/tigergate-kspm-agent) as a mirror. Override `repository`
-# for a private registry mirror — see install.mdx's "Private registry mirror"
-# tab for the imagePullSecrets pairing.
 image:
   repository: tigergate/tigergate-kspm-agent
   tag: "latest"
   pullPolicy: IfNotPresent
 
-# ── 1. KSPM posture operator ────────────────────────────────────────────────
-# Cluster-scoped Deployment ×1 (binary: tigergate-operator). Runs the
-# posture/inventory/KIEM/CIS-NSA engine in-process against the API server
-# (read-only) every scanIntervalPosture, fetches org custom-rules + image-trust
-# policy each scan, and doubles as the single in-cluster relay point this
-# cluster's runtime (eBPF) sensor fleet streams to — sensors dial relay.port
-# instead of the platform individually, and the operator forwards upstream.
 controller:
   enabled: true
   scanIntervalPosture: "30m"
@@ -98,123 +25,50 @@ controller:
     requests: { cpu: "50m", memory: "128Mi" }
     limits: { cpu: "500m", memory: "512Mi" }
 
-# Runtime-sensor relay server embedded in tigergate-operator.
 relay:
   port: 8090
 
-# Per-product kill switches. When true, tigergate-operator still runs its scan
-# loop / accepts sensor connections locally, but skips forwarding that
-# product's data upstream — for an org/cluster that has opted out of KSPM or
-# Runtime without uninstalling the chart.
 blockKspm: false
 blockRuntime: false
 
-# ── 2. Admission controller (ValidatingWebhook) ─────────────────────────────
-# Audit by default (warn only); set mode=enforce to deny. failurePolicy Ignore
-# keeps the cluster safe if the webhook is down. Admission events are batched
-# to the backend via the same gRPC ingest path as scan reports.
 admission:
   enabled: true
-  mode: "audit"               # audit | enforce
-  level: "baseline"           # baseline | restricted
-  allowedRegistries: []       # [] = any registry (image-trust off)
-  failurePolicy: "Ignore"     # Ignore | Fail
+  mode: "audit"
+  level: "baseline"
+  allowedRegistries: []
+  failurePolicy: "Ignore"
   replicas: 1
   resources:
     requests: { cpu: "50m", memory: "64Mi" }
     limits: { cpu: "200m", memory: "256Mi" }
 
-# ── 3. TigerGate runtime sensor (eBPF DaemonSet) ─────────────────────────────
-# One pod per node. Collects runtime events (process/file/network/privilege) via
-# eBPF and streams them over gRPC to this cluster's tigergate-operator relay
-# (see `relay:` above), which forwards on to tigergate-go-ingester for
-# tigergate-detect. Requires a privileged container with host PID + kernel
-# access for eBPF.
 sensor:
   enabled: true
-  # Dual-published to Docker Hub (default here, `docker pull tigergate/tigergate-sensor`)
-  # and GHCR (ghcr.io/tigergate/tigergate-sensor) as a mirror. Built from the
-  # tigergate runtime-sensor repo — see that repo's Dockerfile. Override
-  # `repository` for a private registry mirror.
   image:
-    repository: tigergate/tigergate-sensor
-    tag: "latest"
+    repository: docker.io/tigergate/tigergate-sensor
+    tag: "v1.0.2"
     pullPolicy: IfNotPresent
-  # In-cluster gRPC address of the operator's relay. Leave "" to use the
-  # chart-computed default (this release's operator-relay Service DNS name) —
-  # override only for a non-standard topology (e.g. sensor deployed via a
-  # separate release from the operator).
   ingestGrpcAddr: ""
-  # eBPF needs kernel access. Leave true for the real sensor; set false only for a
-  # userspace/demo image that doesn't load BPF programs.
   privileged: true
   hostPID: true
   hostNetwork: false
-  # Mount the host kernel debug + bpf fs (needed by libbpf-based probes).
   mountKernelDebug: true
-  # Access the Kubernetes API to associate each kernel event with the pod /
-  # namespace / labels that produced it. The sensor binary defaults this OFF
-  # (--enable-k8s-api=false → host-only events), so the chart turns it on:
-  # runtime findings and cross-product correlation need pod identity to be
-  # useful. Uses the pods/namespaces watch RBAC the ServiceAccount already grants.
-  # Set false only if you deliberately want raw host-only events.
   enableK8sApi: true
-  # TigerGate distributes tracing policies as files (the operator relay writes
-  # them into the sensor's tracing-policy-dir), so the CRD-based policy controller
-  # is left OFF — with it on, enabling the K8s API makes the sensor block on
-  # startup waiting for TracingPolicy CRDs that are never installed. Set true
-  # (and install the sensor's TracingPolicy CRDs) only if you deliver policies as
-  # CRDs. Ignored when enableK8sApi is false.
   enableTracingPolicyCrd: false
-  # Kubernetes-scoped runtime policies — a metadata.namespace, podSelector or
-  # containerSelector — need the sensor's policy filter. With it off the sensor
-  # rejects every one of them ("policyfilter is disabled") while the rest load,
-  # so namespace/pod rules silently never apply. On by default, as in upstream
-  # Tetragon's own chart. Pod-label selectors also need enableK8sApi.
   enablePolicyFilter: true
-  # kprobe_multi attaches many kernel functions with one BPF link and is the
-  # faster path, so leave this false. Sensor images newer than 1.0.1 fall back to
-  # single kprobes by themselves for the one case kprobe_multi cannot load — an
-  # Override (block) on a security_ function, e.g. a file-write or delete block.
-  # Set true only on an older image whose logs show "can't override
-  # 'security_file_open' function with kprobe_multi".
   disableKprobeMulti: false
-  # Runtime event shipping. The sensor ships kernel events to the platform by
-  # TAPPING the JSON event exporter — that Send() hook is where each event batch
-  # is streamed to the ingest. The binary DISABLES that exporter by default
-  # (--export-filename ""), so with it off the sensor loads its probes, logs
-  # "Listening for events...", and ships NOTHING (BPF captures, but Send()/Ship()
-  # never run). The chart turns it on. The on-disk file is a bounded byproduct
-  # written into an in-pod emptyDir (never the host filesystem, so it cannot cause
-  # node DiskPressure); the events you care about leave over gRPC, not this file.
   export:
     enabled: true
-    # File the exporter writes to, inside the emptyDir mounted at its parent dir.
     filename: /var/run/tigergate/tigergate-sensor.log
-    # Rotation caps bound the emptyDir footprint: maxSizeMb x (maxBackups + 1).
-    # 10 x 4 = 40MB worst case; compressed backups make it far less in practice.
     maxSizeMb: 10
     maxBackups: 3
     compress: true
-  extraEnv: []                # e.g. [{ name: LOG_LEVEL, value: info }]
+  extraEnv: []
   extraArgs: []
-  # Run on every node incl. tainted control-plane nodes.
   tolerations:
     - operator: "Exists"
   nodeSelector:
     kubernetes.io/os: linux
-  # Excludes virtual/serverless node backends that cannot run a privileged
-  # DaemonSet at all — no nodeSelector/toleration makes the sensor work on
-  # these, this only stops it from sitting stuck Pending trying to:
-  #   • EKS Fargate: eks.amazonaws.com/compute-type=fargate nodes use a
-  #     virtual-kubelet backend, no DaemonSet support.
-  #   • AKS virtual nodes (ACI) / other virtual-kubelet providers: labeled
-  #     type=virtual-kubelet.
-  # NOT covered here: GKE Autopilot rejects `privileged: true` at admission
-  # on its regular (non-virtual) nodes — there's no reliable node label to
-  # exclude, so there's nothing a selector can do. Set sensor.enabled=false
-  # on Autopilot, or run a Standard node pool alongside it for the sensor.
-  # See install.mdx's flavor-compatibility table.
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -226,61 +80,19 @@ sensor:
               - key: type
                 operator: NotIn
                 values: ["virtual-kubelet"]
-  # Steady-state usage is ~105Mi, but the limit must cover the TRANSIENT SPIKE
-  # while the tracing policies load: on kernel 5.11+ BPF map memory is charged
-  # to the container's memcg, and this config allocates execve_map (32768
-  # entries / 28M), a 65536-entry process cache and the ring buffers, plus the
-  # verifier's working set for each generic_kprobe/tracepoint program. 512Mi
-  # OOMKills (exit 137) partway through "Loading sensor name=generic_kprobe",
-  # which reads as a crashloop with no error message — the container dies before
-  # it can log. Do not size this from `kubectl top`, which only ever shows the
-  # post-load steady state.
   resources:
     requests: { cpu: "100m", memory: "256Mi" }
     limits: { cpu: "500m", memory: "1Gi" }
 
-# ── 4. Per-node CIS host-scanner (optional) ─────────────────────────────────
-# Privileged DaemonSet (binary: node-scanner). OFF by default. Reads the HOST
-# /proc to evaluate the CIS §1.2/1.3/1.4 control-plane + §2 etcd + §4.2 kubelet
-# ARGUMENT controls (turning them from NOT_ASSESSED into real PASS/FAIL) — these
-# are unreachable from inside the operator's pod whenever the control plane
-# isn't exposed as pods in-cluster.
-#
-#   ENABLE on self-hosted clusters: k3s, kubeadm, bare-metal/VM control planes.
-#   LEAVE OFF on managed clusters: EKS, AKS, GKE, OKE — the control plane isn't
-#   on a node you can read there, so this adds nothing but privileged-DaemonSet
-#   risk for zero benefit. The operator already reports these controls as
-#   NOT_ASSESSED (not FAIL) on managed flavors, so nothing is silently missed.
 nodeScanner:
   enabled: false
-  runMode: "loop"             # loop | once
+  runMode: "loop"
   interval: "30m"
-  # CIS §4.1 kubelet file ownership/permission checks (kubelet.conf, config.yaml,
-  # the kubeadm systemd drop-in). Adds 3 read-only hostPath mounts. Safe to leave
-  # on for managed clusters too — files that don't exist there are skipped, not
-  # false-failed.
   checkKubeletFiles: true
   resources:
     requests: { cpu: "20m", memory: "32Mi" }
     limits: { cpu: "100m", memory: "128Mi" }
 
-# ── 5. AI-assisted remediation (optional) ───────────────────────────────────
-# TigerGuard AI generates a fix for a finding, and — only if this is enabled —
-# a SEPARATE, narrowly-scoped Deployment (binary: tigergate-remediator, its own
-# ServiceAccount) can preview (dry-run) and apply it against the live cluster
-# resource. OFF by default: every other component in this chart is deliberately
-# read-only, so this is new write capability into your cluster and must be an
-# explicit opt-in, not something a routine `helm upgrade` silently grants.
-#
-# Deliberately a separate Deployment/ServiceAccount from the operator, not a
-# second credential bolted onto it — a Kubernetes pod has exactly one
-# ServiceAccount identity, so genuine read/write blast-radius isolation
-# requires a separate pod. Its ClusterRole grants ONLY get+patch on
-# Deployments/StatefulSets/DaemonSets — never pods, secrets, RBAC, or Jobs/
-# CronJobs (whose pod templates are immutable or future-run-only).
-#
-# Works identically on self-hosted and managed clusters — it patches whatever
-# root controller owns the flagged pod, resolved live via ownerReferences.
 remediation:
   enabled: false
   pollInterval: "15s"
@@ -288,36 +100,8 @@ remediation:
     requests: { cpu: "20m", memory: "32Mi" }
     limits: { cpu: "100m", memory: "128Mi" }
 
-# When true, a NetworkPolicy caps non-host-network pod egress to DNS + 443
-# (backend HTTPS) + 50051 (gRPC ingest — scan reports/admission events/node
-# controls/remediation-job polling) + the API server port below. Set false if
-# your CNI doesn't enforce policy. Does not apply to the sensor when
-# sensor.hostNetwork=true (host-network pods bypass NetworkPolicy).
 network:
   restrictEgress: true
-  # Ports the kube-apiserver ENDPOINT may listen on — NOT the 443 of the
-  # `kubernetes` Service. NetworkPolicy egress is matched after the Service
-  # ClusterIP is DNAT'd to its endpoint, so allowing 443 alone does not permit
-  # API server traffic: the packet is evaluated against the Service's
-  # targetPort. Getting this wrong denies every component's API server access
-  # and CrashLoops the sensor, while leaving the operator/admission controller
-  # apparently healthy on their pre-existing connections (they keep using
-  # streams opened before the CNI programmed the policy).
-  #
-  # This is a LIST, not a single port, because the endpoint port is
-  # distro-specific and a chart that must install unattended everywhere cannot
-  # guess one:
-  #     443    EKS / GKE / AKS  (also covered by the backend rule above)
-  #     6443   k3s / RKE2 / kubeadm / kind / OpenShift
-  #     8443   minikube
-  #     16443  microk8s
-  # The defaults below cover every distro we ship to, so this normally needs no
-  # override. Narrow it to your cluster's single real port if you want a tighter
-  # policy — confirm the value with:
-  #   kubectl get svc kubernetes -n default \
-  #     -o jsonpath='{.spec.ports[0].targetPort}'
-  # These are egress-only and the rule above already permits 443 to any
-  # destination, so listing the extra ports widens the posture very little.
   apiServerPorts:
     - 6443
     - 8443

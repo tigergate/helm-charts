@@ -44,10 +44,6 @@ spec:
             - "--tls-cert=/etc/tigergate/tls/tls.crt"
             - "--tls-key=/etc/tigergate/tls/tls.key"
           env:
-            # Endpoint ladder, applied by the BINARY (not here): an explicit URL
-            # wins, then $TG_REGION, then the default region. Each var is emitted
-            # only when actually set, so a chart with neither behaves exactly as
-            # it did before `region` existed.
             {{- if .Values.region }}
             - name: TG_REGION
               value: {{ .Values.region | quote }}

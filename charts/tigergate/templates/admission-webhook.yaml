@@ -6,9 +6,6 @@
 {{- $altNames := list $cn (printf "%s.%s.svc.cluster.local" $svc $ns) }}
 {{- $ca := genCA "tigergate-admission-ca" 3650 }}
 {{- $cert := genSignedCert $cn nil $altNames 3650 $ca }}
-# Self-signed serving cert for the webhook. CN/SANs match the in-cluster Service
-# DNS so the API server trusts it via the caBundle below. Regenerated on each helm
-# upgrade (Secret + caBundle update together, so they stay consistent).
 apiVersion: v1
 kind: Secret
 metadata:
@@ -45,8 +42,6 @@ webhooks:
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["pods"]
-    # Never intercept system namespaces or our own — avoids self-deadlock and
-    # breaking control-plane components.
     namespaceSelector:
       matchExpressions:
         - key: kubernetes.io/metadata.name

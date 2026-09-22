@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
@@ -57,14 +58,14 @@ jobs:
 
       - name: helm registry login
         run: |
-          echo "${{ secrets.HELM_REGISTRY_PASSWORD }}" | helm registry login registry.tigergate.dev \
-            --username "${{ secrets.HELM_REGISTRY_USERNAME }}" --password-stdin
+          echo "${{ github.token }}" | helm registry login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
 
       - name: helm push
         run: |
           helm push "/tmp/packaged/${{ steps.meta.outputs.chart }}-${{ steps.meta.outputs.version }}.tgz" \
-            oci://registry.tigergate.dev/charts
-          echo "Pushed oci://registry.tigergate.dev/charts/${{ steps.meta.outputs.chart }}:${{ steps.meta.outputs.version }}"
+            "oci://ghcr.io/${{ github.repository_owner }}/charts"
+          echo "Pushed oci://ghcr.io/${{ github.repository_owner }}/charts/${{ steps.meta.outputs.chart }}:${{ steps.meta.outputs.version }}"
 
       - name: GitHub release
         env:
@@ -78,5 +79,5 @@ jobs:
           gh release create "$TAG" \
             "/tmp/packaged/${{ steps.meta.outputs.chart }}-${{ steps.meta.outputs.version }}.tgz" \
             --title "${{ steps.meta.outputs.chart }} chart v${{ steps.meta.outputs.version }}" \
-            --notes "Published to oci://registry.tigergate.dev/charts/${{ steps.meta.outputs.chart }}:${{ steps.meta.outputs.version }}" \
+            --notes "Published to oci://ghcr.io/${{ github.repository_owner }}/charts/${{ steps.meta.outputs.chart }}:${{ steps.meta.outputs.version }}" \
             --repo "${{ github.repository }}"

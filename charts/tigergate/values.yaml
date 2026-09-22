@@ -15,7 +15,7 @@ clusterName: ""
 
 image:
   repository: tigergate/tigergate-kspm-agent
-  tag: "latest"
+  tag: "1.0.2"
   pullPolicy: IfNotPresent
 
 controller:
@@ -45,8 +45,8 @@ admission:
 sensor:
   enabled: true
   image:
-    repository: docker.io/tigergate/tigergate-sensor
-    tag: "v1.0.2"
+    repository: tigergate/tigergate-sensor
+    tag: "1.0.2"
     pullPolicy: IfNotPresent
   ingestGrpcAddr: ""
   privileged: true

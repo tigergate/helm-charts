@@ -1,20 +1,5 @@
 name: Release Chart
 
-# Packages a chart and pushes it to the OCI registry every install command in
-# the product (backend HELM_CHART constant, in-app setup guide, mintlify docs)
-# already points at: oci://registry.tigergate.dev/charts/<name>. Not a
-# classic index.yaml/GitHub-Pages Helm repo (unlike e.g. Datadog's
-# helm.datadoghq.com) — TigerGate already runs its own private OCI registry,
-# so this reuses it instead of standing up a second distribution mechanism.
-#
-# Trigger:
-#   • push a tag:   git tag tigergate-chart-v0.2.0 && git push origin tigergate-chart-v0.2.0
-#   • manually:     Actions ▸ Release Chart ▸ Run workflow (enter the chart + version)
-#
-# Required repo secrets (registry.tigergate.dev is TigerGate's own private OCI
-# registry — these are NOT Docker Hub/GHCR credentials):
-#   HELM_REGISTRY_USERNAME / HELM_REGISTRY_PASSWORD
-
 on:
   push:
     tags: ["*-chart-v*.*.*"]
@@ -29,7 +14,7 @@ on:
         required: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   release:
@@ -80,3 +65,18 @@ jobs:
           helm push "/tmp/packaged/${{ steps.meta.outputs.chart }}-${{ steps.meta.outputs.version }}.tgz" \
             oci://registry.tigergate.dev/charts
           echo "Pushed oci://registry.tigergate.dev/charts/${{ steps.meta.outputs.chart }}:${{ steps.meta.outputs.version }}"
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.meta.outputs.chart }}-chart-v${{ steps.meta.outputs.version }}"
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+          gh release create "$TAG" \
+            "/tmp/packaged/${{ steps.meta.outputs.chart }}-${{ steps.meta.outputs.version }}.tgz" \
+            --title "${{ steps.meta.outputs.chart }} chart v${{ steps.meta.outputs.version }}" \
+            --notes "Published to oci://registry.tigergate.dev/charts/${{ steps.meta.outputs.chart }}:${{ steps.meta.outputs.version }}" \
+            --repo "${{ github.repository }}"

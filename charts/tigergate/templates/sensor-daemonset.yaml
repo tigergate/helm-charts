@@ -16,14 +16,9 @@
 {{- $exportMaxBackups := $export.maxBackups | default 3 }}
 {{- $exportCompress := true }}
 {{- if kindIs "bool" $export.compress }}{{- $exportCompress = $export.compress }}{{- end }}
-# TigerGate runtime sensor (one pod per node). Loads eBPF probes to observe process
-# execution, file access, network connections and privilege changes, and streams
-# the normalized event batches over gRPC to this cluster's tigergate-operator
-# relay (controller-deployment.yaml's relay Service), which forwards every batch
-# on to tigergate-go-ingester under the org's API key — the sensor never talks to
-# the platform directly, matching every other KSPM component's "one relay point
-# per cluster" pattern. Requires kernel access: a privileged container with host
-# PID and the kernel debug/bpf filesystems mounted.
+{{- /* Same --reuse-values reasoning: a release that predates the key gets true. */}}
+{{- $policyFilter := true }}
+{{- if kindIs "bool" .Values.sensor.enablePolicyFilter }}{{- $policyFilter = .Values.sensor.enablePolicyFilter }}{{- end }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -73,26 +68,16 @@ spec:
           imagePullPolicy: {{ .Values.sensor.image.pullPolicy }}
           args:
             {{- if .Values.sensor.enableK8sApi }}
-            # Associate kernel events with the pod/namespace/labels that produced
-            # them (sensor defaults --enable-k8s-api to false → host-only events).
             - --enable-k8s-api
-            # TigerGate ships tracing policies as FILES (tracing-policy-dir), not
-            # as CRDs. Enabling the K8s API otherwise starts the sensor's CRD
-            # controller-manager, which blocks on startup waiting for TracingPolicy
-            # CRDs that are never installed. Turn it off so pod-metadata enrichment
-            # works without a CRD dependency. Set sensor.enableTracingPolicyCrd=true
-            # (and install the CRDs) if you distribute policies as CRDs instead.
             {{- if not .Values.sensor.enableTracingPolicyCrd }}
             - --enable-tracing-policy-crd=false
             {{- end }}
             {{- end }}
+            - --enable-policy-filter={{ $policyFilter }}
+            {{- if .Values.sensor.disableKprobeMulti }}
+            - --disable-kprobe-multi
+            {{- end }}
             {{- if $exportEnabled }}
-            # Enable the JSON event exporter. This is REQUIRED for runtime events
-            # to reach the platform: the sensor ships each event batch to the
-            # ingest from the exporter's Send() hook, so with the exporter off
-            # (the binary's default) BPF captures events but none are shipped.
-            # The file itself lands in an in-pod emptyDir (see volumes), bounded
-            # by the rotation caps below.
             - --export-filename={{ $exportFilename }}
             - --export-file-max-size-mb={{ $exportMaxSize }}
             - --export-file-max-backups={{ $exportMaxBackups }}
@@ -104,15 +89,6 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           env:
-            # Endpoint ladder, applied by the SENSOR (not here): an explicit URL
-            # wins, then $TIGERGATE_REGION, then the default region. Each var is
-            # emitted only when actually set, so a chart with neither behaves
-            # exactly as it did before `region` existed.
-            #
-            # The sensor streams kernel events out of this cluster, so this is
-            # the value that decides which country they land in. It reads
-            # TIGERGATE_REGION; TG_REGION on the other components is a different
-            # name for the same code.
             {{- if .Values.region }}
             - name: TIGERGATE_REGION
               value: {{ .Values.region | quote }}
@@ -160,9 +136,6 @@ spec:
               mountPropagation: Bidirectional
             {{- end }}
             {{- if $exportEnabled }}
-            # In-pod ephemeral store for the JSON export file + its rotated
-            # backups. Mounting the file's parent dir keeps the write off the host
-            # filesystem so a busy node can't hit DiskPressure from event volume.
             - name: tigergate-export
               mountPath: {{ dir $exportFilename }}
             {{- end }}

@@ -41,10 +41,6 @@ spec:
             - name: relay
               containerPort: {{ .Values.relay.port }}
           env:
-            # Endpoint ladder, applied by the BINARY (not here): an explicit URL
-            # wins, then $TG_REGION, then the default region. Each var is emitted
-            # only when actually set, so a chart with neither behaves exactly as
-            # it did before `region` existed.
             {{- if .Values.region }}
             - name: TG_REGION
               value: {{ .Values.region | quote }}
@@ -76,10 +72,6 @@ spec:
           resources:
             {{- toYaml .Values.controller.resources | nindent 12 }}
 ---
-# Runtime-sensor relay endpoint — this cluster's eBPF sensor fleet streams
-# here (in-cluster, plaintext) instead of dialing the platform individually;
-# tigergate-operator forwards every batch upstream to the gRPC ingest address
-# under its own org API key. Not exposed outside the cluster.
 apiVersion: v1
 kind: Service
 metadata:

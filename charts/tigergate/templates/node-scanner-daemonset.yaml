@@ -1,12 +1,4 @@
 {{- if .Values.nodeScanner.enabled }}
-# Optional privileged per-node CIS host-scanner (one pod per node). Reads the HOST
-# /proc (mounted read-only) to evaluate the CIS control-plane + kubelet ARGUMENT
-# controls, plus (when checkKubeletFiles is set) the CIS §4.1 kubelet FILE
-# ownership/permission controls, and reports PASS/FAIL via the gRPC ingest
-# path. ONLY READS the host; never writes it.
-#
-#   ENABLE on self-hosted clusters: k3s, kubeadm, bare-metal/VM control planes.
-#   LEAVE OFF on managed clusters: EKS, AKS, GKE, OKE (see values.yaml).
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -31,11 +23,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      # hostPID: see the kernel /proc of every process on the node so we can read
-      # the control-plane / kubelet command lines.
       hostPID: true
-      # Tolerate control-plane taints — the apiserver/etcd/scheduler/cm processes
-      # we evaluate run ON the control-plane nodes, which are commonly tainted.
       tolerations:
         - operator: "Exists"
       containers:
@@ -51,10 +39,6 @@ spec:
             - "--interval={{ .Values.nodeScanner.interval }}"
             {{- end }}
           env:
-            # Endpoint ladder, applied by the BINARY (not here): an explicit URL
-            # wins, then $TG_REGION, then the default region. Each var is emitted
-            # only when actually set, so a chart with neither behaves exactly as
-            # it did before `region` existed.
             {{- if .Values.region }}
             - name: TG_REGION
               value: {{ .Values.region | quote }}
@@ -62,10 +46,6 @@ spec:
             - name: HOST_PROC
               value: "/host/proc"
             {{- if .Values.nodeScanner.checkKubeletFiles }}
-            # CIS §4.1 kubelet file ownership/permissions (kubelet.conf,
-            # config.yaml, the kubeadm systemd drop-in) — read-only stat only,
-            # never written. No-ops safely on distros without these paths
-            # (managed EKS/GKE/AKS nodes, non-kubeadm installs).
             - name: HOST_ROOT
               value: "/host-root"
             {{- end }}
@@ -85,10 +65,6 @@ spec:
                   name: {{ include "tigergate.secretRef" . }}
                   key: apiKey
           securityContext:
-            # privileged is REQUIRED to read root-owned processes' /proc/<pid>/cmdline
-            # (CAP_SYS_PTRACE alone is insufficient across all CRIs / kernel configs).
-            # The container still only READS the host — root FS is read-only and no
-            # host paths are writable.
             privileged: true
             readOnlyRootFilesystem: true
             runAsNonRoot: false

@@ -166,6 +166,19 @@ sensor:
   # (and install the sensor's TracingPolicy CRDs) only if you deliver policies as
   # CRDs. Ignored when enableK8sApi is false.
   enableTracingPolicyCrd: false
+  # Kubernetes-scoped runtime policies — a metadata.namespace, podSelector or
+  # containerSelector — need the sensor's policy filter. With it off the sensor
+  # rejects every one of them ("policyfilter is disabled") while the rest load,
+  # so namespace/pod rules silently never apply. On by default, as in upstream
+  # Tetragon's own chart. Pod-label selectors also need enableK8sApi.
+  enablePolicyFilter: true
+  # kprobe_multi attaches many kernel functions with one BPF link and is the
+  # faster path, so leave this false. Sensor images newer than 1.0.1 fall back to
+  # single kprobes by themselves for the one case kprobe_multi cannot load — an
+  # Override (block) on a security_ function, e.g. a file-write or delete block.
+  # Set true only on an older image whose logs show "can't override
+  # 'security_file_open' function with kprobe_multi".
+  disableKprobeMulti: false
   # Runtime event shipping. The sensor ships kernel events to the platform by
   # TAPPING the JSON event exporter — that Send() hook is where each event batch
   # is streamed to the ingest. The binary DISABLES that exporter by default
@@ -213,9 +226,18 @@ sensor:
               - key: type
                 operator: NotIn
                 values: ["virtual-kubelet"]
+  # Steady-state usage is ~105Mi, but the limit must cover the TRANSIENT SPIKE
+  # while the tracing policies load: on kernel 5.11+ BPF map memory is charged
+  # to the container's memcg, and this config allocates execve_map (32768
+  # entries / 28M), a 65536-entry process cache and the ring buffers, plus the
+  # verifier's working set for each generic_kprobe/tracepoint program. 512Mi
+  # OOMKills (exit 137) partway through "Loading sensor name=generic_kprobe",
+  # which reads as a crashloop with no error message — the container dies before
+  # it can log. Do not size this from `kubectl top`, which only ever shows the
+  # post-load steady state.
   resources:
-    requests: { cpu: "100m", memory: "128Mi" }
-    limits: { cpu: "500m", memory: "512Mi" }
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits: { cpu: "500m", memory: "1Gi" }
 
 # ── 4. Per-node CIS host-scanner (optional) ─────────────────────────────────
 # Privileged DaemonSet (binary: node-scanner). OFF by default. Reads the HOST
@@ -268,8 +290,35 @@ remediation:
 
 # When true, a NetworkPolicy caps non-host-network pod egress to DNS + 443
 # (backend HTTPS) + 50051 (gRPC ingest — scan reports/admission events/node
-# controls/remediation-job polling). Set false if your CNI doesn't enforce
-# policy. Does not apply to the sensor when sensor.hostNetwork=true
-# (host-network pods bypass NetworkPolicy).
+# controls/remediation-job polling) + the API server port below. Set false if
+# your CNI doesn't enforce policy. Does not apply to the sensor when
+# sensor.hostNetwork=true (host-network pods bypass NetworkPolicy).
 network:
   restrictEgress: true
+  # Ports the kube-apiserver ENDPOINT may listen on — NOT the 443 of the
+  # `kubernetes` Service. NetworkPolicy egress is matched after the Service
+  # ClusterIP is DNAT'd to its endpoint, so allowing 443 alone does not permit
+  # API server traffic: the packet is evaluated against the Service's
+  # targetPort. Getting this wrong denies every component's API server access
+  # and CrashLoops the sensor, while leaving the operator/admission controller
+  # apparently healthy on their pre-existing connections (they keep using
+  # streams opened before the CNI programmed the policy).
+  #
+  # This is a LIST, not a single port, because the endpoint port is
+  # distro-specific and a chart that must install unattended everywhere cannot
+  # guess one:
+  #     443    EKS / GKE / AKS  (also covered by the backend rule above)
+  #     6443   k3s / RKE2 / kubeadm / kind / OpenShift
+  #     8443   minikube
+  #     16443  microk8s
+  # The defaults below cover every distro we ship to, so this normally needs no
+  # override. Narrow it to your cluster's single real port if you want a tighter
+  # policy — confirm the value with:
+  #   kubectl get svc kubernetes -n default \
+  #     -o jsonpath='{.spec.ports[0].targetPort}'
+  # These are egress-only and the rule above already permits 443 to any
+  # destination, so listing the extra ports widens the posture very little.
+  apiServerPorts:
+    - 6443
+    - 8443
+    - 16443

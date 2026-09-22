@@ -16,6 +16,9 @@
 {{- $exportMaxBackups := $export.maxBackups | default 3 }}
 {{- $exportCompress := true }}
 {{- if kindIs "bool" $export.compress }}{{- $exportCompress = $export.compress }}{{- end }}
+{{- /* Same --reuse-values reasoning: a release that predates the key gets true. */}}
+{{- $policyFilter := true }}
+{{- if kindIs "bool" .Values.sensor.enablePolicyFilter }}{{- $policyFilter = .Values.sensor.enablePolicyFilter }}{{- end }}
 # TigerGate runtime sensor (one pod per node). Loads eBPF probes to observe process
 # execution, file access, network connections and privilege changes, and streams
 # the normalized event batches over gRPC to this cluster's tigergate-operator
@@ -85,6 +88,14 @@ spec:
             {{- if not .Values.sensor.enableTracingPolicyCrd }}
             - --enable-tracing-policy-crd=false
             {{- end }}
+            {{- end }}
+            # Namespace-, pod- and container-scoped policies are rejected with
+            # "policyfilter is disabled" unless this is on. Passed explicitly
+            # either way so the chart decides, not whichever default the image
+            # was built with (1.0.1 and earlier default it off).
+            - --enable-policy-filter={{ $policyFilter }}
+            {{- if .Values.sensor.disableKprobeMulti }}
+            - --disable-kprobe-multi
             {{- end }}
             {{- if $exportEnabled }}
             # Enable the JSON event exporter. This is REQUIRED for runtime events

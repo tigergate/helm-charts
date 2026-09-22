@@ -172,6 +172,8 @@ helm install tigergate ... --set backend.existingSecret=tg-key
 | `sensor.enabled` | `true` | TigerGate eBPF DaemonSet |
 | `sensor.ingestGrpcAddr` | `""` | Sensor's **event**-shipping address. Empty → falls back to `backend.ingestGrpcAddr` (direct to platform). Set explicitly to route events through the `controller` relay instead. |
 | `sensor.extraArgs` | `[]` | Extra CLI flags passed to the sensor binary — **required** for event shipping/pod metadata to work at all, see [Enable runtime event shipping](#enable-runtime-event-shipping-and-pod-metadata) above. |
+| `sensor.enablePolicyFilter` | `true` | Required for runtime policies scoped by `metadata.namespace`, `podSelector` or `containerSelector`. Off, the sensor rejects each of them with `policyfilter is disabled`. |
+| `sensor.disableKprobeMulti` | `false` | Only for sensor images 1.0.1 and earlier, whose file-write/delete block policies fail with `can't override 'security_file_open' function with kprobe_multi`. Newer images fall back per policy on their own. |
 | `sensor.privileged` / `.hostPID` | `true` / `true` | eBPF needs kernel access |
 | `sensor.image.repository` | `tigergate/tigergate-sensor` | Override for your registry |
 | `relay.port` | `8090` | Port the `controller`'s embedded relay listens on — forwards sensor events when `sensor.ingestGrpcAddr` is set to it, and always serves sensor **policy sync** when `TIGERGATE_OPERATOR_ADDR` targets it |

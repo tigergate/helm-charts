@@ -42,6 +42,16 @@ webhooks:
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["pods"]
+    # Namespaces excluded from admission checks. kube-system, kube-node-lease
+    # and the release's own namespace are ALWAYS excluded (the classic
+    # self-lockout case: the webhook rejecting the pods that run it). Anything
+    # beyond that is admission.extraExcludedNamespaces — see values.yaml for
+    # why this has to be a chart value and not a `kubectl patch` on the live
+    # object: a manual patch here becomes a field-manager conflict on the
+    # NEXT `helm upgrade` (Kubernetes server-side apply refuses to let Helm's
+    # own field manager overwrite a field `kubectl-patch` owns), and forcing
+    # past that conflict silently wipes the patch — re-enabling enforcement
+    # on every namespace it was excluding, with no warning that it happened.
     namespaceSelector:
       matchExpressions:
         - key: kubernetes.io/metadata.name
@@ -50,4 +60,7 @@ webhooks:
             - kube-system
             - kube-node-lease
             - {{ $ns }}
+            {{- range .Values.admission.extraExcludedNamespaces }}
+            - {{ . }}
+            {{- end }}
 {{- end }}

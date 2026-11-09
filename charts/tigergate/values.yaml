@@ -15,7 +15,7 @@ clusterName: ""
 
 image:
   repository: tigergate/tigergate-kspm-agent
-  tag: "1.0.2"
+  tag: "1.0.3"
   pullPolicy: IfNotPresent
 
 controller:
@@ -37,6 +37,13 @@ admission:
   level: "baseline"
   allowedRegistries: []
   failurePolicy: "Ignore"
+  # Namespaces to exclude from admission checks, beyond the three the chart
+  # always excludes on its own (kube-system, kube-node-lease, the release's
+  # own namespace). Put a namespace here instead of `kubectl patch`-ing the
+  # live ValidatingWebhookConfiguration: a manual patch isn't visible to
+  # Helm, so it silently conflicts with (and can be silently wiped by) the
+  # next `helm upgrade` — that already happened once in the field.
+  extraExcludedNamespaces: []
   replicas: 1
   resources:
     requests: { cpu: "50m", memory: "64Mi" }
@@ -46,7 +53,10 @@ sensor:
   enabled: true
   image:
     repository: tigergate/tigergate-sensor
-    tag: "1.0.2"
+    # Pin, don't float on "latest" — a privileged, eBPF-loading DaemonSet
+    # shouldn't silently change what it runs on a node reboot. The git tag
+    # is v1.0.3; the image on Docker Hub has no "v".
+    tag: "1.0.3"
     pullPolicy: IfNotPresent
   ingestGrpcAddr: ""
   privileged: true

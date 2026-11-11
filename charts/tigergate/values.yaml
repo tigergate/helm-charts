@@ -112,6 +112,13 @@ remediation:
 
 network:
   restrictEgress: true
+  # NetworkPolicy ports match the destination AFTER the Service is resolved to a
+  # pod, so DNS must be allowed on the port CoreDNS itself listens on, not only
+  # the Service's 53. Several distributions run CoreDNS unprivileged on 1053
+  # behind port 53; without it every agent's DNS lookup is dropped.
+  dnsPorts:
+    - 53
+    - 1053
   apiServerPorts:
     - 6443
     - 8443

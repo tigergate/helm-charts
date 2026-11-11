@@ -99,6 +99,7 @@ rejected. Region codes are listed at
 | `remediation.enabled` | `false` | AI-fix preview/apply executor. |
 | `remediation.pollInterval` | `15s` | How often the remediator polls for approved fixes. |
 | `network.restrictEgress` | `true` | Adds a NetworkPolicy limiting egress to DNS, HTTPS and gRPC ingest. |
+| `network.dnsPorts` | `[53, 1053]` | DNS ports allowed, UDP and TCP. Include the port CoreDNS itself listens on: policies match it, not the Service's 53. |
 | `network.apiServerPorts` | `[6443, 8443, 16443]` | Extra ports allowed for API server access, alongside 443, by distro. |
 
 See [values.yaml](values.yaml) for the complete, authoritative list.

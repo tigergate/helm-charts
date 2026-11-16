@@ -93,6 +93,7 @@ rejected. Region codes are listed at
 | `sensor.disableKprobeMulti` | `false` | Set `true` only for sensor images 1.0.1 and earlier. |
 | `sensor.export.enabled` | `true` | Required for events to actually ship; the export file feeds the gRPC sender. |
 | `sensor.export.maxSizeMb` / `.maxBackups` | `10` / `3` | Bounds the export file's on-disk footprint. |
+| `sensor.enforcement` | `true` | Whether runtime policies may block on this cluster. `false` loads every policy in monitor mode: matches are reported, nothing is blocked. |
 | `sensor.extraArgs` / `.extraEnv` | `[]` | Extra CLI flags / env vars for the sensor container. |
 | `nodeScanner.enabled` | `false` | CIS host-scanner. On for self-hosted, off for managed clusters. |
 | `nodeScanner.checkKubeletFiles` | `true` | CIS §4.1 kubelet file ownership/permission checks. |

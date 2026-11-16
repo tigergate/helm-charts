@@ -63,4 +63,42 @@ webhooks:
             {{- range .Values.admission.extraExcludedNamespaces }}
             - {{ . }}
             {{- end }}
+{{- if .Values.admission.workloadDrift }}
+  # Workload drift and unauthorized workloads (MITRE T1610): sidecars added to an
+  # existing workload's pod template, and workloads created by service accounts that
+  # are not controllers or deployment tools. Observe only: the handler never denies
+  # these, and failurePolicy is always Ignore so it can never block a deploy.
+  - name: workloads.admission-controller.tigergate.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    timeoutSeconds: 5
+    failurePolicy: Ignore
+    clientConfig:
+      service:
+        name: {{ $svc }}
+        namespace: {{ $ns }}
+        path: /validate
+        port: 443
+      caBundle: {{ $ca.Cert | b64enc }}
+    rules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments", "statefulsets", "daemonsets"]
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["jobs", "cronjobs"]
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            - kube-system
+            - kube-node-lease
+            - {{ $ns }}
+            {{- range .Values.admission.extraExcludedNamespaces }}
+            - {{ . }}
+            {{- end }}
+{{- end }}
 {{- end }}

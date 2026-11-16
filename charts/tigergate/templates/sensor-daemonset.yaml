@@ -77,6 +77,9 @@ spec:
             {{- if .Values.sensor.disableKprobeMulti }}
             - --disable-kprobe-multi
             {{- end }}
+            {{- if .Values.sensor.processNamespaces }}
+            - --enable-process-ns
+            {{- end }}
             {{- if $exportEnabled }}
             - --export-filename={{ $exportFilename }}
             - --export-file-max-size-mb={{ $exportMaxSize }}
@@ -89,6 +92,11 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           env:
+            {{- if eq (toString .Values.sensor.enforcement) "false" }}
+            # Monitor only: policies load in monitor mode and block nothing (sensor.enforcement=false).
+            - name: TIGERGATE_ENFORCE
+              value: "off"
+            {{- end }}
             {{- if .Values.region }}
             - name: TIGERGATE_REGION
               value: {{ .Values.region | quote }}

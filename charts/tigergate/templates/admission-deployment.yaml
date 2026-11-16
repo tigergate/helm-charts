@@ -15,6 +15,11 @@ spec:
       app.kubernetes.io/component: admission-controller
   template:
     metadata:
+      # The serving certificate and CA bundle are regenerated on every render (admission-webhook.yaml genCA), so the
+      # pods roll on every upgrade and start with the new certificate; the server also reloads it from the Secret
+      # when the kubelet swaps the files in (BUG-0603).
+      annotations:
+        tigergate.dev/tls-rollout: {{ randAlphaNum 12 | quote }}
       labels:
         {{- include "tigergate.labels" . | nindent 8 }}
         app.kubernetes.io/component: admission-controller
@@ -41,9 +46,16 @@ spec:
             {{- if .Values.admission.allowedRegistries }}
             - "--allowed-registries={{ join "," .Values.admission.allowedRegistries }}"
             {{- end }}
+            {{- with .Values.admission.trustedServiceAccountNamespaces }}
+            - "--trusted-sa-namespaces={{ join "," . }}"
+            {{- end }}
             - "--tls-cert=/etc/tigergate/tls/tls.crt"
             - "--tls-key=/etc/tigergate/tls/tls.key"
           env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             {{- if .Values.region }}
             - name: TG_REGION
               value: {{ .Values.region | quote }}

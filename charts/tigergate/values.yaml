@@ -44,6 +44,14 @@ admission:
   # Helm, so it silently conflicts with (and can be silently wiped by) the
   # next `helm upgrade` — that already happened once in the field.
   extraExcludedNamespaces: []
+  # Report sidecars added to existing workloads and workloads created by
+  # service accounts that are not controllers or deployment tools (MITRE T1610).
+  # Observe only: these are warn events, never denials.
+  workloadDrift: true
+  # Namespaces whose service accounts create workloads as their job (no
+  # unauthorized-workload event). A trailing * matches a prefix. The release's
+  # own namespace is always trusted.
+  trustedServiceAccountNamespaces: [kube-system, argocd, flux-system, kyverno, gatekeeper-system, tigergate-system]
   replicas: 1
   resources:
     requests: { cpu: "50m", memory: "64Mi" }
@@ -67,6 +75,16 @@ sensor:
   enableTracingPolicyCrd: false
   enablePolicyFilter: true
   disableKprobeMulti: false
+  # Report each process's Linux namespaces (--enable-process-ns). The runtime rules
+  # that need to know whether a container shares the node's PID, network or mount
+  # namespace (hostPID process enumeration, /proc/1/root access, host namespace entry)
+  # read this; without it they never fire. Adds the namespace ids to process events.
+  processNamespaces: true
+  # Whether runtime policies may block on this cluster. true: Sigkill kills the process and Override fails the call,
+  # as each policy is written. false: every policy loads in the engine's monitor mode and blocks nothing; matches are
+  # still reported (TIGERGATE_ENFORCE=off). Switch with:
+  #   helm upgrade tigergate <chart> -n tigergate-system --reuse-values --set sensor.enforcement=true
+  enforcement: true
   export:
     enabled: true
     filename: /var/run/tigergate/tigergate-sensor.log

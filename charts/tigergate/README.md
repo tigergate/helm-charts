@@ -83,7 +83,7 @@ rejected. Region codes are listed at
 | `admission.allowedRegistries` | `[]` | Non-empty enables image-trust enforcement. |
 | `admission.failurePolicy` | `Ignore` | `Ignore` keeps the cluster working if the webhook is down. |
 | `sensor.enabled` | `true` | Runtime eBPF DaemonSet. |
-| `sensor.image.repository` / `.tag` | `tigergate/tigergate-sensor` / `v1.1.0` | Pinned, not `latest` — see [Sensor image pinning](#sensor-image-pinning). |
+| `sensor.image.repository` / `.tag` | `tigergate/tigergate-sensor` / `1.0.5` | Pinned, not `latest` — see [Sensor image pinning](#sensor-image-pinning). |
 | `sensor.ingestGrpcAddr` | `""` | Event-shipping address. Empty falls back to `backend.ingestGrpcAddr` (direct to the platform). Set to route events through the operator relay instead. |
 | `sensor.privileged` / `.hostPID` | `true` / `true` | Required for eBPF and reading kernel state. |
 | `sensor.mountKernelDebug` | `true` | Mounts `/sys/kernel/debug` and `/sys/fs/bpf`. |

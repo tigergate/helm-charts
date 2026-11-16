@@ -15,7 +15,7 @@ clusterName: ""
 
 image:
   repository: tigergate/tigergate-kspm-agent
-  tag: "1.0.4"
+  tag: "1.0.5"
   pullPolicy: IfNotPresent
 
 controller:
@@ -63,8 +63,8 @@ sensor:
     repository: tigergate/tigergate-sensor
     # Pin, don't float on "latest" — a privileged, eBPF-loading DaemonSet
     # shouldn't silently change what it runs on a node reboot. The git tag
-    # is v1.0.4; the image on Docker Hub has no "v".
-    tag: "1.0.4"
+    # is v1.0.5; the image on Docker Hub has no "v".
+    tag: "1.0.5"
     pullPolicy: IfNotPresent
   ingestGrpcAddr: ""
   privileged: true
